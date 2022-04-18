@@ -1,0 +1,20 @@
+[package]
+name = "pi_assets"
+version = "0.1.0"
+authors = ["zmax <zmax@gaia.world>"]
+edition = "2021"
+description = "Implementation of LFU-LRU cache"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+keywords = ["pi", "asset"]
+repository = "https://github.com/GaiaWorld/pi_assets"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "0.4"
+slotmap = "1.0"
+pi_any = "0.1"
+pi_cache = "0.1"
+pi_hash = "0.1"
+futures = "0.3"
