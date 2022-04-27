@@ -3,32 +3,34 @@
 //! 加载新资源和定时整理时，会清理缓存，并调用回收器
 
 use futures::io;
-use parking_lot::Mutex;
 use pi_cache::Metrics;
+use pi_share::{ShareMutex, ShareUsize};
 use std::io::{Error, ErrorKind};
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{Ordering};
 
 use crate::asset::*;
 
 #[derive(Debug)]
 pub struct AssetMgrInfo {
     pub timeout: usize,
+    pub len: usize,
     pub size: usize,
     pub capacity: usize,
-    pub use_count: usize,
+    pub cache_len: usize,
     pub cache_size: usize,
-    pub cache_count: usize,
     pub cache_metrics: Metrics,
 }
 /// 单类型资产管理器
 pub struct AssetMgr<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> {
     /// 正在使用及缓存的资产表
-    lock: Mutex<AssetTable<A>>,
+    lock: ShareMutex<AssetTable<A>>,
+    /// 当前资产的数量
+    len: ShareUsize,
     /// 当前资产的大小
-    size: AtomicUsize,
+    size: ShareUsize,
     /// 当前管理器的容量
-    capacity: AtomicUsize,
+    capacity: ShareUsize,
     /// 加载器
     loader: L,
     /// 回收器
@@ -52,13 +54,18 @@ impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> AssetMgr<A, P, L, G> {
         timeout: usize,
     ) -> Self {
         AssetMgr {
-            lock: Mutex::new(AssetTable::<A>::new(timeout)),
-            size: AtomicUsize::new(0),
-            capacity: AtomicUsize::new(capacity),
+            lock: ShareMutex::new(AssetTable::<A>::new(timeout)),
+            len: ShareUsize::new(0),
+            size: ShareUsize::new(0),
+            capacity: ShareUsize::new(capacity),
             loader,
             garbage,
             _p: PhantomData,
         }
+    }
+    /// 获得资产的数量
+    pub fn len(&self) -> usize {
+        self.len.load(Ordering::Relaxed)
     }
     /// 获得资产的大小
     pub fn size(&self) -> usize {
@@ -74,16 +81,17 @@ impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> AssetMgr<A, P, L, G> {
     }
     /// 获得基本信息
     pub fn info(&self) -> AssetMgrInfo {
+        let len = self.len();
         let size = self.size();
         let capacity = self.get_capacity();
         let table = self.lock.lock();
         AssetMgrInfo {
             timeout: table.timeout,
+            len,
             size,
             capacity,
-            use_count: table.use_count(),
+            cache_len: table.cache_len(),
             cache_size: table.cache_size(),
-            cache_count: table.cache_count(),
             cache_metrics: table.cache_metrics(),
         }
     }
@@ -97,37 +105,42 @@ impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> AssetMgr<A, P, L, G> {
         let add = v.size();
         let mut table = self.lock.lock();
         let r = table.cache(k, v);
-        let mut sub = if let Some(r) = &r { r.size() } else { 0 };
+        let (mut len, mut sub) = if let Some(r) = &r { (1, r.size()) } else { (0, 0) };
         if add > sub {
             let amount = self.size.load(Ordering::Relaxed);
             let c = self.capacity.load(Ordering::Relaxed);
             if amount + add > c + sub {
-                sub += table.capacity_collect(&self.garbage, c);
+                let (l, s) = table.capacity_collect(&self.garbage, c);
+                len += l;
+                sub += s;
             }
         }
+        fetch(&self.len, 1, len);
         fetch(&self.size, add, sub);
         r
     }
     /// 放入资产， 并获取资产句柄
-    pub fn insert(&self, k: A::Key, v: A) -> Option<ArcDrop<A>> {
+    pub fn insert(&self, k: A::Key, v: A) -> Option<Handle<A>> {
         let add = v.size();
-        let lock = &self.lock as *const Mutex<AssetTable<A>> as usize;
+        let lock = &self.lock as *const ShareMutex<AssetTable<A>> as usize;
         let mut table = self.lock.lock();
         let r = table.insert(k, v, lock);
+        let mut len = 0;
         let mut sub = 0;
         if r.is_some() {
             let amount = self.size.load(Ordering::Relaxed);
             let c = self.capacity.load(Ordering::Relaxed);
             if amount + add > c {
-                sub = table.capacity_collect(&self.garbage, c);
+                (len, sub) = table.capacity_collect(&self.garbage, c);
             }
         }
+        fetch(&self.len, 1, len);
         fetch(&self.size, add, sub);
         r
     }
     /// 同步获取已经存在或被缓存的资产
-    pub fn get(&self, k: A::Key) -> Option<ArcDrop<A>> {
-        let lock = &self.lock as *const Mutex<AssetTable<A>> as usize;
+    pub fn get(&self, k: A::Key) -> Option<Handle<A>> {
+        let lock = &self.lock as *const ShareMutex<AssetTable<A>> as usize;
         loop {
             let mut table = self.lock.lock();
             if let Some(r) = table.get(k.clone(), lock) {
@@ -142,8 +155,8 @@ impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> AssetMgr<A, P, L, G> {
     }
 
     /// 异步检查已经存在或被缓存的资产，如果资产正在被加载，则挂起等待
-    pub async fn check<AP>(&self, k: A::Key) -> io::Result<ArcDrop<A>> {
-        let lock = &self.lock as *const Mutex<AssetTable<A>> as usize;
+    pub async fn check<AP>(&self, k: A::Key) -> io::Result<Handle<A>> {
+        let lock = &self.lock as *const ShareMutex<AssetTable<A>> as usize;
         let receiver = loop {
             let mut table = self.lock.lock();
             match table.check(k.clone(), lock, false) {
@@ -174,8 +187,8 @@ impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> AssetMgr<A, P, L, G> {
         }
     }
     /// 异步加载指定参数的资产
-    pub async fn load(&self, k: A::Key, p: P) -> io::Result<ArcDrop<A>> {
-        let lock = &self.lock as *const Mutex<AssetTable<A>> as usize;
+    pub async fn load(&self, k: A::Key, p: P) -> io::Result<Handle<A>> {
+        let lock = &self.lock as *const ShareMutex<AssetTable<A>> as usize;
         let receiver = loop {
             let mut table = self.lock.lock();
             match table.check(k.clone(), lock, true) {
@@ -223,16 +236,18 @@ impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> AssetMgr<A, P, L, G> {
         Ok(r)
     }
     /// 接受数据， 返回等待的接收器
-    fn receive(&self, k: A::Key, v: A) -> (ArcDrop<A>, Option<AssetResult<A>>) {
+    fn receive(&self, k: A::Key, v: A) -> (Handle<A>, Option<AssetResult<A>>) {
         let add = v.size();
-        let lock = &self.lock as *const Mutex<AssetTable<A>> as usize;
+        let lock = &self.lock as *const ShareMutex<AssetTable<A>> as usize;
         let mut table = self.lock.lock();
+        let mut len = 0;
         let mut sub = 0;
         let amount = self.size.load(Ordering::Relaxed);
         let c = self.capacity.load(Ordering::Relaxed);
         if amount + add > c {
-            sub = table.capacity_collect(&self.garbage, c);
+            (len, sub) = table.capacity_collect(&self.garbage, c);
         }
+        fetch(&self.len, 1, len);
         fetch(&self.size, add, sub);
         table.receive(k, v, lock)
     }
@@ -251,7 +266,8 @@ impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> AssetMgr<A, P, L, G> {
         }else{
             0
         };
-        let sub = table.timeout_collect(&self.garbage, c, now);
+        let (len, sub) = table.timeout_collect(&self.garbage, c, now);
+        self.len.fetch_sub(len, Ordering::Relaxed);
         self.size.fetch_sub(sub, Ordering::Relaxed);
     }
     /// 超容量整理， 并设置当前容量
@@ -270,12 +286,20 @@ impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> AssetMgr<A, P, L, G> {
         }else{
             0
         };
-        let sub = table.capacity_collect(&self.garbage, c);
+        let (len, sub) = table.capacity_collect(&self.garbage, c);
+        self.len.fetch_sub(len, Ordering::Relaxed);
         self.size.fetch_sub(sub, Ordering::Relaxed);
+    }
+    /// 迭代
+    pub fn iter<Arg>(&self, arg: &mut Arg, func: fn(&mut Arg, k: &A::Key, v: &A, u64)) {
+        let table = self.lock.lock();
+        for (k, item) in table.cache_iter() {
+            func(arg, k, &item.0, item.1)
+        }
     }
 }
 
-fn fetch(i: &AtomicUsize, add: usize, sub: usize) {
+fn fetch(i: &ShareUsize, add: usize, sub: usize) {
     if add > sub {
         i.fetch_add(add - sub, Ordering::Relaxed);
     }

@@ -2,8 +2,8 @@
 
 use pi_async::rt::{AsyncRuntime, AsyncTaskPool, AsyncTaskPoolExt};
 
+use pi_share::Share;
 use pi_time::now_millisecond;
-use std::sync::Arc;
 
 use crate::asset::*;
 use crate::mgr::AssetMgr;
@@ -43,7 +43,7 @@ impl Allocator {
     /// 在指定组别上注册指定加载器的资产管理器，要求必须单线程注册
     pub fn register<A: Asset + Send + Sync, P: 'static, L: AssetLoader<A, P>, G: Garbageer<A>>(
         &mut self,
-        mgr: Arc<AssetMgr<A, P, L, G>>,
+        mgr: Share<AssetMgr<A, P, L, G>>,
         min_capacity: usize,
         max_capacity: usize,
     ) {
@@ -172,7 +172,7 @@ impl Allocator {
     }
 }
 struct Item {
-    mgr: Arc<dyn Collect + 'static>,
+    mgr: Share<dyn Collect + 'static>,
     min_capacity: usize,
     max_capacity: usize,
     weight_capacity: usize,
