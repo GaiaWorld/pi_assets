@@ -278,7 +278,6 @@ mod test_mod {
     pub fn test() {
         let pool = MultiTaskRuntimeBuilder::default();
         let rt0 = pool.build();
-        let rt1 = rt0.clone();
         let _ = rt0.spawn(rt0.alloc(), async move {
             let mgr = Arc::new(AssetMgr::<R1, _, _, _>::new(
                 Loader(),
