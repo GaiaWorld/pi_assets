@@ -2,14 +2,14 @@
 //! 包括了资产的重用，资产的加载
 //! 加载新资源和定时整理时，会清理缓存，并调用回收器
 
+use crate::asset::*;
 use futures::io;
 use pi_cache::Metrics;
-use pi_share::{ShareMutex, ShareUsize};
+use pi_cache::{FREQUENCY_DOWN_RATE, WINDOW_SIZE};
+use pi_share::{Share, ShareMutex, ShareUsize};
 use std::io::{Error, ErrorKind};
 use std::marker::PhantomData;
-use std::sync::atomic::{Ordering};
-
-use crate::asset::*;
+use std::sync::atomic::Ordering;
 
 #[derive(Debug)]
 pub struct AssetMgrInfo {
@@ -35,33 +35,63 @@ pub struct AssetMgr<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> {
     loader: L,
     /// 回收器
     garbage: G,
+    /// 是否采用引用回收及锁指针
+    ref_garbage_lock: usize,
     _p: PhantomData<P>,
 }
-unsafe impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> Send
-    for AssetMgr<A, P, L, G>
-{
-}
-unsafe impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> Sync
-    for AssetMgr<A, P, L, G>
-{
-}
+unsafe impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> Send for AssetMgr<A, P, L, G> {}
+unsafe impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> Sync for AssetMgr<A, P, L, G> {}
 impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> AssetMgr<A, P, L, G> {
-    /// 用指定的参数创建资产管理器
+    /// 用指定的参数创建资产管理器， ref_garbage为是否采用引用整理
     pub fn new(
         loader: L,
         garbage: G,
+        ref_garbage: bool,
         capacity: usize,
         timeout: usize,
-    ) -> Self {
-        AssetMgr {
-            lock: ShareMutex::new(AssetTable::<A>::new(timeout)),
+    ) -> Share<Self> {
+        Self::with_config(
+            loader,
+            garbage,
+            ref_garbage,
+            capacity,
+            timeout,
+            0,
+            WINDOW_SIZE,
+            FREQUENCY_DOWN_RATE,
+        )
+    }
+    /// 用指定的参数创建资产管理器
+    pub fn with_config(
+        loader: L,
+        garbage: G,
+        ref_garbage: bool, // 是否采用引用整理
+        capacity: usize,
+        timeout: usize,
+        cache_init_capacity: usize,
+        cuckoo_filter_window_size: usize,
+        frequency_down_rate: usize,
+    ) -> Share<Self> {
+        let mut mgr = Share::new(AssetMgr {
+            lock: ShareMutex::new(AssetTable::<A>::with_config(
+                timeout,
+                cache_init_capacity,
+                cuckoo_filter_window_size,
+                frequency_down_rate,
+            )),
             len: ShareUsize::new(0),
             size: ShareUsize::new(0),
             capacity: ShareUsize::new(capacity),
             loader,
             garbage,
+            ref_garbage_lock: 0,
             _p: PhantomData,
+        });
+        if ref_garbage {
+            let mgr = Share::get_mut(&mut mgr).unwrap();
+            mgr.ref_garbage_lock = &mgr.lock as *const ShareMutex<AssetTable<A>> as usize;
         }
+        mgr
     }
     /// 获得资产的数量
     pub fn len(&self) -> usize {
@@ -103,39 +133,55 @@ impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> AssetMgr<A, P, L, G> {
     /// 缓存指定的资产
     pub fn cache(&self, k: A::Key, v: A) -> Option<A> {
         let add = v.size();
-        let mut table = self.lock.lock();
-        let r = table.cache(k, v);
-        let (mut len, mut sub) = if let Some(r) = &r { (1, r.size()) } else { (0, 0) };
-        if add > sub {
-            let amount = self.size.load(Ordering::Relaxed);
-            let c = self.capacity.load(Ordering::Relaxed);
-            if amount + add > c + sub {
-                let (l, s) = table.capacity_collect(&self.garbage, c);
-                len += l;
-                sub += s;
+        let (r, b) = {
+            let mut table = self.lock.lock();
+            let r = table.cache(k, v);
+            let (mut len, mut sub) = if let Some(r) = &r {
+                (1, r.size())
+            } else {
+                (0, 0)
+            };
+            if add > sub {
+                let amount = self.size.load(Ordering::Relaxed);
+                let c = self.capacity.load(Ordering::Relaxed);
+                if amount + add > c + sub {
+                    let (l, s) = table.capacity_collect(&self.garbage, c, self.ref_garbage_lock);
+                    len += l;
+                    sub += s;
+                }
             }
+            fetch(&self.len, 1, len);
+            fetch(&self.size, add, sub);
+            (r, len > 0)
+        };
+        if b {
+            self.garbage.finished();
         }
-        fetch(&self.len, 1, len);
-        fetch(&self.size, add, sub);
         r
     }
     /// 放入资产， 并获取资产句柄
     pub fn insert(&self, k: A::Key, v: A) -> Option<Handle<A>> {
         let add = v.size();
         let lock = &self.lock as *const ShareMutex<AssetTable<A>> as usize;
-        let mut table = self.lock.lock();
-        let r = table.insert(k, v, lock);
-        let mut len = 0;
-        let mut sub = 0;
-        if r.is_some() {
-            let amount = self.size.load(Ordering::Relaxed);
-            let c = self.capacity.load(Ordering::Relaxed);
-            if amount + add > c {
-                (len, sub) = table.capacity_collect(&self.garbage, c);
+        let (r, b) = {
+            let mut table = self.lock.lock();
+            let r = table.insert(k, v, lock);
+            let mut len = 0;
+            let mut sub = 0;
+            if r.is_some() {
+                let amount = self.size.load(Ordering::Relaxed);
+                let c = self.capacity.load(Ordering::Relaxed);
+                if amount + add > c {
+                    (len, sub) = table.capacity_collect(&self.garbage, c, self.ref_garbage_lock);
+                }
             }
+            fetch(&self.len, 1, len);
+            fetch(&self.size, add, sub);
+            (r, len > 0)
+        };
+        if b {
+            self.garbage.finished();
         }
-        fetch(&self.len, 1, len);
-        fetch(&self.size, add, sub);
         r
     }
     /// 同步获取已经存在或被缓存的资产
@@ -239,56 +285,70 @@ impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> AssetMgr<A, P, L, G> {
     fn receive(&self, k: A::Key, v: A) -> (Handle<A>, Option<AssetResult<A>>) {
         let add = v.size();
         let lock = &self.lock as *const ShareMutex<AssetTable<A>> as usize;
-        let mut table = self.lock.lock();
-        let mut len = 0;
-        let mut sub = 0;
-        let amount = self.size.load(Ordering::Relaxed);
-        let c = self.capacity.load(Ordering::Relaxed);
-        if amount + add > c {
-            (len, sub) = table.capacity_collect(&self.garbage, c);
+        let (r, b) = {
+            let mut table = self.lock.lock();
+            let mut len = 0;
+            let mut sub = 0;
+            let amount = self.size.load(Ordering::Relaxed);
+            let c = self.capacity.load(Ordering::Relaxed);
+            if amount + add > c {
+                (len, sub) = table.capacity_collect(&self.garbage, c, self.ref_garbage_lock);
+            }
+            fetch(&self.len, 1, len);
+            fetch(&self.size, add, sub);
+            (table.receive(k, v, lock), len > 0)
+        };
+        if b {
+            self.garbage.finished();
         }
-        fetch(&self.len, 1, len);
-        fetch(&self.size, add, sub);
-        table.receive(k, v, lock)
+        r
     }
     /// 超时整理
     pub fn timeout_collect(&self, min_capacity: usize, now: u64) {
         let size = self.size.load(Ordering::Relaxed);
         if size <= min_capacity {
-            return
+            return;
         }
-        let mut table = self.lock.lock();
-        // 获得使用大小 = 总大小 - 缓存大小
-        let s = size + table.cache_size();
-        // 获得对应缓存部分的容量， 容量-使用大小
-        let c = if s <  min_capacity {
-            min_capacity - s
-        }else{
-            0
+        let b = {
+            let mut table = self.lock.lock();
+            // 获得使用大小 = 总大小 - 缓存大小
+            let s = size + table.cache_size();
+            // 获得对应缓存部分的容量， 容量-使用大小
+            let c = if s < min_capacity {
+                min_capacity - s
+            } else {
+                0
+            };
+            let (len, sub) = table.timeout_collect(&self.garbage, c, now, self.ref_garbage_lock);
+            self.len.fetch_sub(len, Ordering::Relaxed);
+            self.size.fetch_sub(sub, Ordering::Relaxed);
+            len > 0
         };
-        let (len, sub) = table.timeout_collect(&self.garbage, c, now);
-        self.len.fetch_sub(len, Ordering::Relaxed);
-        self.size.fetch_sub(sub, Ordering::Relaxed);
+        if b {
+            self.garbage.finished();
+        }
     }
     /// 超容量整理， 并设置当前容量
     pub fn capacity_collect(&self, capacity: usize) {
         self.capacity.store(capacity, Ordering::Relaxed);
         let size = self.size.load(Ordering::Relaxed);
         if size <= capacity {
-            return
+            return;
         }
-        let mut table = self.lock.lock();
-        // 获得使用大小 = 总大小 - 缓存大小
-        let s = size + table.cache_size();
-        // 获得对应缓存部分的容量， 容量-使用大小
-        let c = if s <  capacity {
-            capacity - s
-        }else{
-            0
+        let b = {
+            let mut table = self.lock.lock();
+            // 获得使用大小 = 总大小 - 缓存大小
+            let s = size + table.cache_size();
+            // 获得对应缓存部分的容量， 容量-使用大小
+            let c = if s < capacity { capacity - s } else { 0 };
+            let (len, sub) = table.capacity_collect(&self.garbage, c, self.ref_garbage_lock);
+            self.len.fetch_sub(len, Ordering::Relaxed);
+            self.size.fetch_sub(sub, Ordering::Relaxed);
+            len > 0
         };
-        let (len, sub) = table.capacity_collect(&self.garbage, c);
-        self.len.fetch_sub(len, Ordering::Relaxed);
-        self.size.fetch_sub(sub, Ordering::Relaxed);
+        if b {
+            self.garbage.finished();
+        }
     }
     /// 迭代
     pub fn iter<Arg>(&self, arg: &mut Arg, func: fn(&mut Arg, k: &A::Key, v: &A, u64)) {
@@ -311,10 +371,10 @@ fn fetch(i: &ShareUsize, add: usize, sub: usize) {
 #[cfg(test)]
 mod test_mod {
     use crate::{asset::*, mgr::*};
-    use futures::FutureExt;
     use futures::future::BoxFuture;
-    use pi_async::rt::multi_thread::{MultiTaskRuntimeBuilder, MultiTaskRuntime};
-    use std::{time::Duration, sync::Arc};
+    use futures::FutureExt;
+    use pi_async::rt::multi_thread::{MultiTaskRuntime, MultiTaskRuntimeBuilder};
+    use std::time::Duration;
 
     #[derive(Debug, Eq, PartialEq)]
     struct R1(usize, usize, usize);
@@ -335,22 +395,33 @@ mod test_mod {
                 p.wait_timeout(1000).await;
                 println!("async id2:{}", k);
                 Ok(R1(k, k, 0))
-            }.boxed()
+            }
+            .boxed()
         }
     }
+    struct G(MultiTaskRuntime<()>);
 
+    impl Garbageer<R1> for G {
+        fn garbage(&self, k: usize, _v: R1, _timeout: u64) {
+            println!("garbage: {:?}", k)
+        }
+        fn garbage_ref(&self, k: &usize, _v: &R1, _timeout: u64, guard: GarbageGuard<R1>) {
+            let key = k.clone();
+            let _ = self.0.spawn(self.0.alloc(), async move {
+                println!("garbage_key: {:?}", key);
+                let a = guard;
+                println!("garbage_guard: {:?}", a);
+            });
+            println!("garbage_ref: {:?}", k)
+        }
+    }
     #[test]
     pub fn test() {
         let pool = MultiTaskRuntimeBuilder::default();
         let rt0 = pool.build();
         let rt1 = rt0.clone();
         let _ = rt0.spawn(rt0.alloc(), async move {
-            let mgr = Arc::new(AssetMgr::new(
-                Loader(),
-                GarbageEmpty(), 
-                1024*1024,
-                3*60*1000,
-            ));
+            let mgr = AssetMgr::new(Loader(), G(rt1.clone()), true, 1024 * 1024, 3 * 60 * 1000);
             let mgr1 = mgr.clone();
             let rt2 = rt1.clone();
             let _ = rt1.spawn(rt1.alloc(), async move {
@@ -371,9 +442,11 @@ mod test_mod {
                 println!("r3:{:?}", r1);
             }
             println!("mgr2:{:?}", mgr.info());
-            mgr.timeout_collect(0, u64::MAX);
+
+            mgr.timeout_collect(0, 0); // u64::MAX
+            rt1.wait_timeout(1000).await;
             println!("mgr3:{:?}", mgr.info());
         });
-        std::thread::sleep(Duration::from_millis(5000));
+        std::thread::sleep(Duration::from_millis(6000));
     }
 }

@@ -209,7 +209,7 @@ mod test_mod {
     use futures::FutureExt;
     use futures::future::BoxFuture;
     use pi_async::rt::multi_thread::{MultiTaskRuntimeBuilder, MultiTaskRuntime};
-    use std::{time::Duration, sync::Arc, io};
+    use std::{time::Duration, io};
 
     #[derive(Debug, Eq, PartialEq)]
     struct R1(usize, usize, usize);
@@ -279,24 +279,27 @@ mod test_mod {
         let pool = MultiTaskRuntimeBuilder::default();
         let rt0 = pool.build();
         let _ = rt0.spawn(rt0.alloc(), async move {
-            let mgr = Arc::new(AssetMgr::<R1, _, _, _>::new(
+            let mgr = AssetMgr::<R1, _, _, _>::new(
                 Loader(),
                 GarbageEmpty(), 
+                false,
                 1024*1024,
                 3*60*1000,
-            ));
-            let m = Arc::new(AssetMgr::<R2, _, _, _>::new(
+            );
+            let m = AssetMgr::<R2, _, _, _>::new(
                 Loader(),
-                GarbageEmpty(), 
+                GarbageEmpty(),
+                false,
                 1024*1024,
                 3*60*1000,
-            ));
-            let mm = Arc::new(AssetMgr::<R3, _, _, _>::new(
+            );
+            let mm = AssetMgr::<R3, _, _, _>::new(
                 Loader(),
-                GarbageEmpty(), 
+                GarbageEmpty(),
+                false,
                 1024*1024,
                 3*60*1000,
-            ));
+            );
             let mut all = Allocator::new(100);
             all.register(mgr.clone(), 1, 100);
             all.register(m.clone(), 1, 100);
