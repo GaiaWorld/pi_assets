@@ -166,15 +166,17 @@ impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> AssetMgr<A, P, L, G> {
         let (r, b) = {
             let mut table = self.lock.lock();
             let r = table.insert(k, v, lock);
-            let mut len = 0;
-            let mut sub = 0;
-            if r.is_some() {
+            let (len, sub) = if r.is_some() {
                 let amount = self.size.load(Ordering::Relaxed);
                 let c = self.capacity.load(Ordering::Relaxed);
                 if amount + add > c {
-                    (len, sub) = table.capacity_collect(&self.garbage, c, self.ref_garbage_lock);
+                    table.capacity_collect(&self.garbage, c, self.ref_garbage_lock)
+                }else{
+                (0, 0)
                 }
-            }
+            }else{
+                (0, 0)
+            };
             fetch(&self.len, 1, len);
             fetch(&self.size, add, sub);
             (r, len > 0)
@@ -287,13 +289,13 @@ impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> AssetMgr<A, P, L, G> {
         let lock = &self.lock as *const ShareMutex<AssetTable<A>> as usize;
         let (r, b) = {
             let mut table = self.lock.lock();
-            let mut len = 0;
-            let mut sub = 0;
             let amount = self.size.load(Ordering::Relaxed);
             let c = self.capacity.load(Ordering::Relaxed);
-            if amount + add > c {
-                (len, sub) = table.capacity_collect(&self.garbage, c, self.ref_garbage_lock);
-            }
+            let (len, sub) = if amount + add > c {
+                table.capacity_collect(&self.garbage, c, self.ref_garbage_lock)
+            }else{
+                (0, 0)
+            };
             fetch(&self.len, 1, len);
             fetch(&self.size, add, sub);
             (table.receive(k, v, lock), len > 0)
