@@ -1,12 +1,13 @@
 //! Asset 资产
 
 use core::fmt;
+use std::sync::atomic::Ordering;
 use flume::{bounded, Receiver, Sender};
 use futures::future::BoxFuture;
 use futures::io;
 use pi_cache::{Cache, Data, Iter, Metrics};
 use pi_hash::XHashMap;
-use pi_share::{Share, ShareMutex, ShareWeak};
+use pi_share::{Share, ShareMutex, ShareWeak, ShareUsize};
 use pi_time::now_millisecond;
 use std::collections::hash_map::Entry;
 use std::fmt::Debug;
@@ -23,6 +24,7 @@ pub trait Asset: 'static {
     fn size(&self) -> usize {
         1
     }
+
 }
 
 /// 回收器定义
@@ -67,12 +69,24 @@ impl<A: Asset> Deref for Droper<A> {
         }
     }
 }
+impl<A: Asset> Droper<A> {
+    /// adjust size
+    pub fn adjust_size(&self, size: isize) {
+        let lock: &Lock<A> =
+            unsafe { &*(self.lock as *const Lock<A>) };
+            if size > 0 {
+                lock.1.fetch_add(size as usize, Ordering::Release);
+            }else {
+                lock.1.fetch_sub(-size as usize, Ordering::Release);
+            }
+    }
+}
 impl<A: Asset> Drop for Droper<A> {
     fn drop(&mut self) {
         let v = unsafe { self.data.take().unwrap_unchecked() };
-        let lock: &ShareMutex<AssetTable<A>> =
-            unsafe { &*(self.lock as *const ShareMutex<AssetTable<A>>) };
-        let mut table = lock.lock();
+        let lock: &Lock<A> =
+            unsafe { &*(self.lock as *const Lock<A>) };
+        let mut table = lock.0.lock();
         // table.size -= v.size();
         table.map.remove(&self.key);
         let timeout = table.timeout as u64 + now_millisecond();
@@ -141,7 +155,7 @@ impl<A: Asset> AssetTable<A> {
     }
     /// 获得缓存的数量
     pub fn cache_len(&self) -> usize {
-        self.cache.count()
+        self.cache.len()
     }
     /// 判断是否有指定键的数据
     pub fn contains_key(&self, k: &A::Key) -> bool {
@@ -309,6 +323,9 @@ impl<A: Asset> AssetTable<A> {
         (l, s)
     }
 }
+
+/// 资产锁， 包括正在使用及缓存的资产表，及当前资产的大小
+pub(crate) struct Lock<A: Asset>(pub ShareMutex<AssetTable<A>>, pub ShareUsize);
 
 /// 资产条目
 pub(crate) struct Item<A: Asset>(pub A, pub u64);
