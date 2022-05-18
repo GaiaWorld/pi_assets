@@ -42,8 +42,8 @@ pub struct GarbageEmpty();
 impl<A: Asset> Garbageer<A> for GarbageEmpty {}
 
 /// 加载器定义
-pub trait AssetLoader<A: Asset, P>: 'static {
-    fn load(&self, k: <A as Asset>::Key, p: P) -> BoxFuture<'static, io::Result<A>>;
+pub trait AssetLoader<'a, A: Asset, P: 'a>: 'static {
+    fn load(&self, k: <A as Asset>::Key, p: P) -> BoxFuture<'a, io::Result<A>>;
 }
 
 /// 可拷贝可回收的资产句柄

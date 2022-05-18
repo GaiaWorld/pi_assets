@@ -22,7 +22,7 @@ pub struct AssetMgrInfo {
     pub cache_metrics: Metrics,
 }
 /// 单类型资产管理器
-pub struct AssetMgr<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> {
+pub struct AssetMgr<A: Asset, P, L, G: Garbageer<A>> where for<'a> L: AssetLoader<'a, A, P> {
     /// 资产锁， 包括正在使用及缓存的资产表，及当前资产的大小
     lock: Lock<A>,
     /// 当前资产的数量
@@ -37,9 +37,9 @@ pub struct AssetMgr<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> {
     ref_garbage_lock: usize,
     _p: PhantomData<P>,
 }
-unsafe impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> Send for AssetMgr<A, P, L, G> {}
-unsafe impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> Sync for AssetMgr<A, P, L, G> {}
-impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> AssetMgr<A, P, L, G> {
+unsafe impl<A: Asset, P, L, G: Garbageer<A>> Send for AssetMgr<A, P, L, G> where for<'a> L: AssetLoader<'a, A, P> {}
+unsafe impl<A: Asset, P, L, G: Garbageer<A>> Sync for AssetMgr<A, P, L, G> where for<'a> L: AssetLoader<'a, A, P> {}
+impl<A: Asset, P, L , G: Garbageer<A>> AssetMgr<A, P, L, G> where for<'a> L: AssetLoader<'a, A, P> {
     /// 用指定的参数创建资产管理器， ref_garbage为是否采用引用整理
     pub fn new(
         loader: L,
@@ -208,7 +208,7 @@ impl<A: Asset, P, L: AssetLoader<A, P>, G: Garbageer<A>> AssetMgr<A, P, L, G> {
     }
 
     /// 异步检查已经存在或被缓存的资产，如果资产正在被加载，则挂起等待
-    pub async fn check<AP>(&self, k: A::Key) -> io::Result<Handle<A>> {
+    pub async fn check(&self, k: A::Key) -> io::Result<Handle<A>> {
         let lock = &self.lock as *const Lock<A> as usize;
         let receiver = loop {
             let mut table = self.lock.0.lock();
@@ -380,7 +380,6 @@ mod test_mod {
     use pi_async::rt::multi_thread::{MultiTaskRuntime, MultiTaskRuntimeBuilder};
     use pi_share::cell::TrustCell;
     use pi_time::now_millisecond;
-    use std::borrow::BorrowMut;
     use std::ops::Deref;
     use std::time::Duration;
     extern crate pcg_rand;
@@ -404,8 +403,8 @@ mod test_mod {
     }
     struct Loader();
 
-    impl AssetLoader<R1, MultiTaskRuntime<()>> for Loader {
-        fn load(&self, k: usize, p: MultiTaskRuntime<()>) -> BoxFuture<'static, io::Result<R1>> {
+    impl<'a> AssetLoader<'a, R1, MultiTaskRuntime<()>> for Loader {
+        fn load(&self, k: usize, p: MultiTaskRuntime<()>) -> BoxFuture<'a, io::Result<R1>> {
             async move {
                 p.wait_timeout(1).await;
                 println!("---------------load:{:?}", k);
@@ -421,7 +420,7 @@ mod test_mod {
             println!("garbage: {:?}", k)
         }
         fn garbage_ref(&self, k: &usize, _v: &R1, _timeout: u64, guard: GarbageGuard<R1>) {
-            let key = k.clone();
+            let _key = k.clone();
             let _ = self.0.spawn(self.0.alloc(), async move {
                 let a = guard;
                 println!("garbage_guard: {:?}", a);
@@ -441,7 +440,7 @@ mod test_mod {
         mgr.set_capacity(5500);
         let _ = rt0.spawn(rt0.alloc(), async move {
             for i in 1..100 {
-                let r = mgr1.load(i, rt1.clone()).await.unwrap();
+                let _r = mgr1.load(i, rt1.clone()).await.unwrap();
             }
             println!("----rrr:{:?}", mgr.info());
             let rt2 = rt1.clone();
