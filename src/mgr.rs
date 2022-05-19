@@ -24,14 +24,14 @@ pub struct AssetMgrInfo {
 }
 /// load方法返回的资源接收器
 pub enum LoadResult<'a, A: Asset, G: Garbageer<A>> {
-    Ok(io::Result<Handle<A>>),
+    Ok(Handle<A>),
     Wait(BoxFuture<'a, io::Result<Handle<A>>>),
-    Receiver(AssetReceiver<A, G>),
+    Receiver(Receiver<A, G>),
 }
 
 /// load方法返回的资源接收器
-pub struct AssetReceiver<A: Asset, G: Garbageer<A>>(Share<AssetMgr<A, G>>);
-impl<A: Asset, G: Garbageer<A>> AssetReceiver<A, G> {
+pub struct Receiver<A: Asset, G: Garbageer<A>>(Share<AssetMgr<A, G>>);
+impl<A: Asset, G: Garbageer<A>> Receiver<A, G> {
     pub async fn receive(self, k: A::Key, r: io::Result<A>) -> io::Result<Handle<A>> {
         let (r, wait) = self.0.receive(k, r);
         if let Some(rr) = wait {
@@ -237,7 +237,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
             match table.check(k.clone(), lock, true) {
                 Result::Ok(r) => {
                     if let Some(rr) = r {
-                        return LoadResult::Ok(Ok(rr));
+                        return LoadResult::Ok(rr);
                     }
                     // 如果r是None, 表示正在释放，退出当前的锁，循环尝试
                 }
@@ -262,7 +262,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
             .boxed();
             return LoadResult::Wait(f);
         }
-        return LoadResult::Receiver(AssetReceiver(mgr.clone()));
+        return LoadResult::Receiver(Receiver(mgr.clone()));
     }
     /// 接受数据， 返回等待的接收器
     fn receive(
@@ -392,7 +392,7 @@ mod test_mod {
         p: MultiTaskRuntime<()>,
     ) -> io::Result<Handle<R1>> {
         match AssetMgr::load(mgr, &k) {
-            LoadResult::Ok(r) => r,
+            LoadResult::Ok(r) => Ok(r),
             LoadResult::Wait(f) => f.await,
             LoadResult::Receiver(recv) => {
                 p.wait_timeout(1).await;
