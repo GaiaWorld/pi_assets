@@ -3,12 +3,13 @@
 //! 加载新资源和定时整理时，会清理缓存，并调用回收器
 
 use crate::asset::*;
-use futures::io;
+use futures::future::BoxFuture;
+use futures::{io, FutureExt};
 use pi_cache::Metrics;
 use pi_cache::{FREQUENCY_DOWN_RATE, WINDOW_SIZE};
 use pi_share::{Share, ShareMutex, ShareUsize};
+use std::fmt::Debug;
 use std::io::{Error, ErrorKind};
-use std::marker::PhantomData;
 use std::sync::atomic::Ordering;
 
 #[derive(Debug)]
@@ -21,35 +22,57 @@ pub struct AssetMgrInfo {
     pub cache_size: usize,
     pub cache_metrics: Metrics,
 }
+/// load方法返回的资源接收器
+pub enum LoadResult<'a, A: Asset, G: Garbageer<A>> {
+    Ok(io::Result<Handle<A>>),
+    Wait(BoxFuture<'a, io::Result<Handle<A>>>),
+    Receiver(AssetReceiver<A, G>),
+}
+
+/// load方法返回的资源接收器
+pub struct AssetReceiver<A: Asset, G: Garbageer<A>>(Share<AssetMgr<A, G>>);
+impl<A: Asset, G: Garbageer<A>> AssetReceiver<A, G> {
+    pub async fn receive(self, k: A::Key, r: io::Result<A>) -> io::Result<Handle<A>> {
+        let (r, wait) = self.0.receive(k, r);
+        if let Some(rr) = wait {
+            match rr {
+                AssetResult::Wait(vec) => match &r {
+                    Ok(v) => {
+                        for s in vec {
+                            let _ = s.into_send_async(Ok(v.clone())).await;
+                        }
+                    }
+                    Err(e) => {
+                        for s in vec {
+                            let _ = s.into_send_async(Err(Error::new(e.kind(), ""))).await;
+                        }
+                    }
+                },
+                _ => (),
+            }
+        }
+        r
+    }
+}
 /// 单类型资产管理器
-pub struct AssetMgr<A: Asset, P, L, G: Garbageer<A>> where for<'a> L: AssetLoader<'a, A, P> {
+pub struct AssetMgr<A: Asset, G: Garbageer<A>> {
     /// 资产锁， 包括正在使用及缓存的资产表，及当前资产的大小
     lock: Lock<A>,
     /// 当前资产的数量
     len: ShareUsize,
     /// 当前管理器的容量
     capacity: ShareUsize,
-    /// 加载器
-    loader: L,
     /// 回收器
     garbage: G,
     /// 是否采用引用回收及锁指针
     ref_garbage_lock: usize,
-    _p: PhantomData<P>,
 }
-unsafe impl<A: Asset, P, L, G: Garbageer<A>> Send for AssetMgr<A, P, L, G> where for<'a> L: AssetLoader<'a, A, P> {}
-unsafe impl<A: Asset, P, L, G: Garbageer<A>> Sync for AssetMgr<A, P, L, G> where for<'a> L: AssetLoader<'a, A, P> {}
-impl<A: Asset, P, L , G: Garbageer<A>> AssetMgr<A, P, L, G> where for<'a> L: AssetLoader<'a, A, P> {
+unsafe impl<A: Asset, G: Garbageer<A>> Send for AssetMgr<A, G> {}
+unsafe impl<A: Asset, G: Garbageer<A>> Sync for AssetMgr<A, G> {}
+impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
     /// 用指定的参数创建资产管理器， ref_garbage为是否采用引用整理
-    pub fn new(
-        loader: L,
-        garbage: G,
-        ref_garbage: bool,
-        capacity: usize,
-        timeout: usize,
-    ) -> Share<Self> {
+    pub fn new(garbage: G, ref_garbage: bool, capacity: usize, timeout: usize) -> Share<Self> {
         Self::with_config(
-            loader,
             garbage,
             ref_garbage,
             capacity,
@@ -61,7 +84,6 @@ impl<A: Asset, P, L , G: Garbageer<A>> AssetMgr<A, P, L, G> where for<'a> L: Ass
     }
     /// 用指定的参数创建资产管理器
     pub fn with_config(
-        loader: L,
         garbage: G,
         ref_garbage: bool, // 是否采用引用整理
         capacity: usize,
@@ -70,19 +92,20 @@ impl<A: Asset, P, L , G: Garbageer<A>> AssetMgr<A, P, L, G> where for<'a> L: Ass
         cuckoo_filter_window_size: usize,
         frequency_down_rate: usize,
     ) -> Share<Self> {
-        let mut mgr = Share::new(AssetMgr {
-            lock: Lock(ShareMutex::new(AssetTable::<A>::with_config(
-                timeout,
-                cache_init_capacity,
-                cuckoo_filter_window_size,
-                frequency_down_rate,
-            )), ShareUsize::new(0)),
+        let mut mgr = Share::new(Self {
+            lock: Lock(
+                ShareMutex::new(AssetTable::<A>::with_config(
+                    timeout,
+                    cache_init_capacity,
+                    cuckoo_filter_window_size,
+                    frequency_down_rate,
+                )),
+                ShareUsize::new(0),
+            ),
             len: ShareUsize::new(0),
             capacity: ShareUsize::new(capacity),
-            loader,
             garbage,
             ref_garbage_lock: 0,
-            _p: PhantomData,
         });
         if ref_garbage {
             let mgr = Share::get_mut(&mut mgr).unwrap();
@@ -176,10 +199,10 @@ impl<A: Asset, P, L , G: Garbageer<A>> AssetMgr<A, P, L, G> where for<'a> L: Ass
                     // 获得对应缓存部分的容量， 容量-使用大小
                     let c = if size < t { t - size } else { 0 };
                     table.capacity_collect(&self.garbage, c, self.ref_garbage_lock)
-                }else{
-                (0, 0)
+                } else {
+                    (0, 0)
                 }
-            }else{
+            } else {
                 (0, 0)
             };
             fetch(&self.len, 1, len);
@@ -192,7 +215,7 @@ impl<A: Asset, P, L , G: Garbageer<A>> AssetMgr<A, P, L, G> where for<'a> L: Ass
         r
     }
     /// 同步获取已经存在或被缓存的资产
-    pub fn get(&self, k: A::Key) -> Option<Handle<A>> {
+    pub fn get(&self, k: &A::Key) -> Option<Handle<A>> {
         let lock = &self.lock as *const Lock<A> as usize;
         loop {
             let mut table = self.lock.0.lock();
@@ -206,48 +229,15 @@ impl<A: Asset, P, L , G: Garbageer<A>> AssetMgr<A, P, L, G> where for<'a> L: Ass
             }
         }
     }
-
-    /// 异步检查已经存在或被缓存的资产，如果资产正在被加载，则挂起等待
-    pub async fn check(&self, k: A::Key) -> io::Result<Handle<A>> {
-        let lock = &self.lock as *const Lock<A> as usize;
-        let receiver = loop {
-            let mut table = self.lock.0.lock();
-            match table.check(k.clone(), lock, false) {
-                Result::Ok(r) => {
-                    if let Some(rr) = r {
-                        return Ok(rr);
-                    }
-                    // 如果r是None, 表示正在释放，退出当前的锁，循环尝试
-                }
-                Result::Err(r) => {
-                    if let Some(r) = r {
-                        break r;
-                    }
-                    return Err(Error::new(ErrorKind::NotFound, ""));
-                }
-            }
-        };
-        // 离开同步锁范围，await等待
-        match receiver.recv_async().await {
-            Ok(r) => r,
-            Err(e) => {
-                //接收错误，则立即返回
-                return Err(Error::new(
-                    ErrorKind::Other,
-                    format!("asset load fail, reason: {:?}", e),
-                ));
-            }
-        }
-    }
     /// 异步加载指定参数的资产
-    pub async fn load(&self, k: A::Key, p: P) -> io::Result<Handle<A>> {
-        let lock = &self.lock as *const Lock<A> as usize;
+    pub fn load<'a>(mgr: &Share<Self>, k: &A::Key) -> LoadResult<'a, A, G> {
+        let lock = &mgr.lock as *const Lock<A> as usize;
         let receiver = loop {
-            let mut table = self.lock.0.lock();
+            let mut table = mgr.lock.0.lock();
             match table.check(k.clone(), lock, true) {
                 Result::Ok(r) => {
                     if let Some(rr) = r {
-                        return Ok(rr);
+                        return LoadResult::Ok(Ok(rr));
                     }
                     // 如果r是None, 表示正在释放，退出当前的锁，循环尝试
                 }
@@ -256,64 +246,63 @@ impl<A: Asset, P, L , G: Garbageer<A>> AssetMgr<A, P, L, G> where for<'a> L: Ass
         };
         // 离开同步锁范围
         if let Some(r) = receiver {
-            // 已经在异步加载中， await等待
-            return match r.recv_async().await {
-                Ok(r) => r,
-                Err(e) => {
-                    //接收错误，则立即返回
-                    Err(Error::new(
-                        ErrorKind::Other,
-                        format!("asset load fail, reason: {:?}", e),
-                    ))
-                }
-            };
-        }
-        let f = self.loader.load(k.clone(), p);
-        // 执行异步加载任务
-        let v = match f.await {
-            Err(e) => return Err(e),
-            Ok(v) => v,
-        };
-        // 将数据放入，并获取等待的接收器
-        let (r, wait) = self.receive(k, v);
-        if let Some(rr) = wait {
-            match rr {
-                AssetResult::Wait(vec) => {
-                    for s in vec {
-                        let _ = s.into_send_async(Ok(r.clone())).await;
+            // 已经在异步加载中， 返回await等待
+            let f = async move {
+                match r.recv_async().await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        //接收错误，则立即返回
+                        Err(Error::new(
+                            ErrorKind::Other,
+                            format!("asset load fail, reason: {:?}", e),
+                        ))
                     }
                 }
-                _ => (),
             }
+            .boxed();
+            return LoadResult::Wait(f);
         }
-        Ok(r)
+        return LoadResult::Receiver(AssetReceiver(mgr.clone()));
     }
     /// 接受数据， 返回等待的接收器
-    fn receive(&self, k: A::Key, v: A) -> (Handle<A>, Option<AssetResult<A>>) {
-        let add = v.size();
-        let lock = &self.lock as *const Lock<A> as usize;
-        let (r, b) = {
-            let mut table = self.lock.0.lock();
-            let amount = self.lock.1.load(Ordering::Acquire);
-            let capacity = self.capacity.load(Ordering::Acquire);
-            let size = amount + add;
-            let (len, sub) = if size > capacity {
-                let t = capacity + table.cache_size();
-                // 获得对应缓存部分的容量， 容量-使用大小
-                let c = if size < t { t - size } else { 0 };
-                table.capacity_collect(&self.garbage, c, self.ref_garbage_lock)
-            }else{
-                (0, 0)
-            };
-            fetch(&self.len, 1, len);
-            fetch(&self.lock.1, add, sub);
-            (table.receive(k, v, lock), len > 0)
-        };
-        if b {
-            self.garbage.finished();
+    fn receive(
+        &self,
+        k: A::Key,
+        r: io::Result<A>,
+    ) -> (io::Result<Handle<A>>, Option<AssetResult<A>>) {
+        match r {
+            Ok(v) => {
+                let add = v.size();
+                let lock = &self.lock as *const Lock<A> as usize;
+                let (r, b) = {
+                    let mut table = self.lock.0.lock();
+                    let amount = self.lock.1.load(Ordering::Acquire);
+                    let capacity = self.capacity.load(Ordering::Acquire);
+                    let size = amount + add;
+                    let (len, sub) = if size > capacity {
+                        let t = capacity + table.cache_size();
+                        // 获得对应缓存部分的容量， 容量-使用大小
+                        let c = if size < t { t - size } else { 0 };
+                        table.capacity_collect(&self.garbage, c, self.ref_garbage_lock)
+                    } else {
+                        (0, 0)
+                    };
+                    fetch(&self.len, 1, len);
+                    fetch(&self.lock.1, add, sub);
+                    (table.receive(k, v, lock), len > 0)
+                };
+                if b {
+                    self.garbage.finished();
+                }
+                r
+            }
+            Err(e) => {
+                let mut table = self.lock.0.lock();
+                (Err(e), table.remove(&k))
+            }
         }
-        r
     }
+
     /// 超时整理
     pub fn timeout_collect(&self, min_capacity: usize, now: u64) {
         let size = self.lock.1.load(Ordering::Acquire);
@@ -367,7 +356,7 @@ impl<A: Asset, P, L , G: Garbageer<A>> AssetMgr<A, P, L, G> where for<'a> L: Ass
 fn fetch(i: &ShareUsize, add: usize, sub: usize) {
     if add > sub {
         i.fetch_add(add - sub, Ordering::Release);
-    }else if add < sub {
+    } else if add < sub {
         i.fetch_sub(sub - add, Ordering::Release);
     }
 }
@@ -375,8 +364,6 @@ fn fetch(i: &ShareUsize, add: usize, sub: usize) {
 #[cfg(test)]
 mod test_mod {
     use crate::{asset::*, mgr::*};
-    use futures::future::BoxFuture;
-    use futures::FutureExt;
     use pi_async::rt::multi_thread::{MultiTaskRuntime, MultiTaskRuntimeBuilder};
     use pi_share::cell::TrustCell;
     use pi_time::now_millisecond;
@@ -385,9 +372,7 @@ mod test_mod {
     extern crate pcg_rand;
     extern crate rand_core;
 
-    use std::{
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use self::rand_core::{RngCore, SeedableRng};
 
@@ -401,16 +386,19 @@ mod test_mod {
             self.0.borrow().1
         }
     }
-    struct Loader();
-
-    impl<'a> AssetLoader<'a, R1, MultiTaskRuntime<()>> for Loader {
-        fn load(&self, k: usize, p: MultiTaskRuntime<()>) -> BoxFuture<'a, io::Result<R1>> {
-            async move {
+    async fn load(
+        mgr: &Share<AssetMgr<R1, G>>,
+        k: usize,
+        p: MultiTaskRuntime<()>,
+    ) -> io::Result<Handle<R1>> {
+        match AssetMgr::load(mgr, &k) {
+            LoadResult::Ok(r) => r,
+            LoadResult::Wait(f) => f.await,
+            LoadResult::Receiver(recv) => {
                 p.wait_timeout(1).await;
                 println!("---------------load:{:?}", k);
-                Ok(R1(TrustCell::new((k, k, 0))))
+                recv.receive(k, Ok(R1(TrustCell::new((k, k, 0))))).await
             }
-            .boxed()
         }
     }
     struct G(MultiTaskRuntime<()>);
@@ -432,28 +420,31 @@ mod test_mod {
         let pool = MultiTaskRuntimeBuilder::default();
         let rt0 = pool.build();
         let rt1 = rt0.clone();
-        let seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         println!("---------------seed:{:?}", seed);
         let mut rng = pcg_rand::Pcg32::seed_from_u64(seed);
-        let mgr = AssetMgr::new(Loader(), G(rt1.clone()), true, 1024 * 1024, 3 * 60 * 1000);
+        let mgr = AssetMgr::new(G(rt1.clone()), true, 1024 * 1024, 3 * 60 * 1000);
         let mgr1 = mgr.clone();
         mgr.set_capacity(5500);
         let _ = rt0.spawn(rt0.alloc(), async move {
             for i in 1..100 {
-                let _r = mgr1.load(i, rt1.clone()).await.unwrap();
+                let _r = load(&mgr1, i, rt1.clone()).await.unwrap();
             }
             println!("----rrr:{:?}", mgr.info());
             let rt2 = rt1.clone();
             let _ = rt1.spawn(rt1.alloc(), async move {
                 loop {
-                let k = (rng.next_u32() % 150) as usize;
-                let r = mgr1.load(k, rt2.clone()).await.unwrap();
-                let rr = r.as_ref();
-                let rrr = Deref::deref(rr);
-                let mut x= rrr.0.borrow_mut();
-                x.1 += k * 10;
-                rr.adjust_size((k*10) as isize);
-                rt2.wait_timeout(100).await;
+                    let k = (rng.next_u32() % 150) as usize;
+                    let r = load(&mgr1, k, rt2.clone()).await.unwrap();
+                    let rr = r.as_ref();
+                    let rrr = Deref::deref(rr);
+                    let mut x = rrr.0.borrow_mut();
+                    x.1 += k * 10;
+                    rr.adjust_size((k * 10) as isize);
+                    rt2.wait_timeout(1).await;
                 }
             });
 
@@ -463,11 +454,9 @@ mod test_mod {
                 println!("----time:{}, mgr2:{:?}", now, mgr.info());
                 mgr.timeout_collect(0, now);
                 //println!("mgr3:{:?}", mgr.info());
-                mgr.capacity_collect(5500/2);
+                mgr.capacity_collect(5500 / 2);
                 println!("----time:{}, mgr3:{:?}", now, mgr.info());
             }
-            
-            
         });
         std::thread::sleep(Duration::from_millis(30000));
     }

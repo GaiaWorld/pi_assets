@@ -11,7 +11,6 @@ use crate::mgr::AssetMgr;
 // 默认满容量的比例
 const FULL: f32 = 0.9;
 
-
 /// 容量分配器
 pub struct Allocator {
     /// 资产管理器列表
@@ -41,9 +40,9 @@ impl Allocator {
         }
     }
     /// 在指定组别上注册指定加载器的资产管理器，要求必须单线程注册
-    pub fn register<A: Asset + Send + Sync, P: 'static, L: for<'a> AssetLoader<'a, A, P>, G: Garbageer<A>>(
+    pub fn register<A: Asset + Send + Sync, G: Garbageer<A>>(
         &mut self,
-        mgr: Share<AssetMgr<A, P, L, G>>,
+        mgr: Share<AssetMgr<A, G>>,
         min_capacity: usize,
         max_capacity: usize,
     ) {
@@ -140,7 +139,7 @@ impl Allocator {
                 let fix = size * item.capacity / full_size;
                 item.capacity += fix;
             }
-        }else if free_size < overflow_size {
+        } else if free_size < overflow_size {
             let size = overflow_size - free_size;
             // 空闲比溢出的少，表示需要收缩，将溢出的条目按overflow权重进行缩小
             for (index, overflow) in &self.temp_overflow {
@@ -187,9 +186,7 @@ trait Collect: Send + Sync {
     /// 超量整理方法， 按照先进先出的原则，清理超出容量的资产
     fn capacity_collect(&self, capacity: usize);
 }
-impl<A: Asset, P, L, G: Garbageer<A>> Collect
-    for AssetMgr<A, P, L, G> where for<'a> L: AssetLoader<'a, A, P>
-{
+impl<A: Asset, G: Garbageer<A>> Collect for AssetMgr<A, G> {
     fn size(&self) -> usize {
         self.size()
     }
@@ -201,15 +198,11 @@ impl<A: Asset, P, L, G: Garbageer<A>> Collect
     }
 }
 
-
-
 #[cfg(test)]
 mod test_mod {
-    use crate::{asset::*, mgr::*, allocator::Allocator};
-    use futures::FutureExt;
-    use futures::future::BoxFuture;
-    use pi_async::rt::multi_thread::{MultiTaskRuntimeBuilder, MultiTaskRuntime};
-    use std::{time::Duration, io};
+    use crate::{allocator::Allocator, asset::*, mgr::*};
+    use pi_async::rt::multi_thread::MultiTaskRuntimeBuilder;
+    use std::time::Duration;
 
     #[derive(Debug, Eq, PartialEq)]
     struct R1(usize, usize, usize);
@@ -241,65 +234,15 @@ mod test_mod {
             self.1
         }
     }
-    struct Loader();
-	
-    impl<'a> AssetLoader<'a, R1, MultiTaskRuntime<()>> for Loader {
-        fn load(&self, k: usize, p: MultiTaskRuntime<()>) -> BoxFuture<'a, io::Result<R1>> {
-            println!("async1 id1:{}", k);
-            async move {
-                p.wait_timeout(1000).await;
-                println!("async1 id2:{}", k);
-                Ok(R1(k, k, 0))
-            }.boxed()
-        }
-    }
-    impl<'a> AssetLoader<'a, R2, MultiTaskRuntime<()>> for Loader {
-        fn load(&self, k: usize, p: MultiTaskRuntime<()>) -> BoxFuture<'a, io::Result<R2>> {
-            println!("async2 id1:{}", k);
-            async move {
-                p.wait_timeout(1000).await;
-                println!("async2 id2:{}", k);
-                Ok(R2(k, k, 0))
-            }.boxed()
-        }
-    }
-    impl<'a> AssetLoader<'a, R3, MultiTaskRuntime<()>> for Loader {
-        fn load(&self, k: usize, p: MultiTaskRuntime<()>) -> BoxFuture<'a, io::Result<R3>> {
-            println!("async3 id1:{}", k);
-            async move {
-                p.wait_timeout(1000).await;
-                println!("async3 id2:{}", k);
-                Ok(R3(k, k, 0))
-            }.boxed()
-        }
-    }
 
     #[test]
     pub fn test() {
         let pool = MultiTaskRuntimeBuilder::default();
         let rt0 = pool.build();
         let _ = rt0.spawn(rt0.alloc(), async move {
-            let mgr = AssetMgr::<R1, _, _, _>::new(
-                Loader(),
-                GarbageEmpty(), 
-                false,
-                1024*1024,
-                3*60*1000,
-            );
-            let m = AssetMgr::<R2, _, _, _>::new(
-                Loader(),
-                GarbageEmpty(),
-                false,
-                1024*1024,
-                3*60*1000,
-            );
-            let mm = AssetMgr::<R3, _, _, _>::new(
-                Loader(),
-                GarbageEmpty(),
-                false,
-                1024*1024,
-                3*60*1000,
-            );
+            let mgr = AssetMgr::<R1, _>::new(GarbageEmpty(), false, 1024 * 1024, 3 * 60 * 1000);
+            let m = AssetMgr::<R2, _>::new(GarbageEmpty(), false, 1024 * 1024, 3 * 60 * 1000);
+            let mm = AssetMgr::<R3, _>::new(GarbageEmpty(), false, 1024 * 1024, 3 * 60 * 1000);
             let mut all = Allocator::new(100);
             all.register(mgr.clone(), 1, 100);
             all.register(m.clone(), 1, 100);

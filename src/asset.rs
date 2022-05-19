@@ -1,13 +1,10 @@
 //! Asset 资产
 
 use core::fmt;
-use std::sync::atomic::Ordering;
 use flume::{bounded, Receiver, Sender};
-use futures::future::BoxFuture;
-use futures::io;
 use pi_cache::{Cache, Data, Iter, Metrics};
 use pi_hash::XHashMap;
-use pi_share::{Share, ShareMutex, ShareWeak, ShareUsize};
+use pi_share::{Share, ShareMutex, ShareUsize, ShareWeak};
 use pi_time::now_millisecond;
 use std::collections::hash_map::Entry;
 use std::fmt::Debug;
@@ -15,6 +12,7 @@ use std::hash::Hash;
 use std::io::Result;
 use std::ops::Deref;
 use std::result::Result as Result1;
+use std::sync::atomic::Ordering;
 
 /// 资产定义
 pub trait Asset: 'static {
@@ -24,7 +22,6 @@ pub trait Asset: 'static {
     fn size(&self) -> usize {
         1
     }
-
 }
 
 /// 回收器定义
@@ -41,19 +38,16 @@ pub trait Garbageer<A: Asset>: 'static {
 pub struct GarbageEmpty();
 impl<A: Asset> Garbageer<A> for GarbageEmpty {}
 
-/// 加载器定义
-pub trait AssetLoader<'a, A: Asset, P: 'a>: 'static {
-    fn load(&self, k: <A as Asset>::Key, p: P) -> BoxFuture<'a, io::Result<A>>;
-}
-
 /// 可拷贝可回收的资产句柄
-pub type Handle<T> = Share<Droper<T>>;
+pub type Handle<A> = Share<Droper<A>>;
 
 pub struct Droper<A: Asset> {
     key: A::Key,
     data: Option<A>,
     lock: usize,
 }
+unsafe impl<A: Asset> Send for Droper<A> {}
+unsafe impl<A: Asset> Sync for Droper<A> {}
 impl<A: Asset + fmt::Debug> fmt::Debug for Droper<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&**self, f)
@@ -72,20 +66,18 @@ impl<A: Asset> Deref for Droper<A> {
 impl<A: Asset> Droper<A> {
     /// adjust size
     pub fn adjust_size(&self, size: isize) {
-        let lock: &Lock<A> =
-            unsafe { &*(self.lock as *const Lock<A>) };
-            if size > 0 {
-                lock.1.fetch_add(size as usize, Ordering::Release);
-            }else {
-                lock.1.fetch_sub(-size as usize, Ordering::Release);
-            }
+        let lock: &Lock<A> = unsafe { &*(self.lock as *const Lock<A>) };
+        if size > 0 {
+            lock.1.fetch_add(size as usize, Ordering::Release);
+        } else {
+            lock.1.fetch_sub(-size as usize, Ordering::Release);
+        }
     }
 }
 impl<A: Asset> Drop for Droper<A> {
     fn drop(&mut self) {
         let v = unsafe { self.data.take().unwrap_unchecked() };
-        let lock: &Lock<A> =
-            unsafe { &*(self.lock as *const Lock<A>) };
+        let lock: &Lock<A> = unsafe { &*(self.lock as *const Lock<A>) };
         let mut table = lock.0.lock();
         // table.size -= v.size();
         table.map.remove(&self.key);
@@ -247,7 +239,12 @@ impl<A: Asset> AssetTable<A> {
         }
     }
     /// 接受数据， 返回等待的接收器
-    pub fn receive(&mut self, k: A::Key, v: A, lock: usize) -> (Handle<A>, Option<AssetResult<A>>) {
+    pub fn receive(
+        &mut self,
+        k: A::Key,
+        v: A,
+        lock: usize,
+    ) -> (Result<Handle<A>>, Option<AssetResult<A>>) {
         // self.size += v.size();
         let r = Share::new(Droper {
             key: k.clone(),
@@ -255,7 +252,11 @@ impl<A: Asset> AssetTable<A> {
             lock,
         });
         let weak = AssetResult::Ok(Share::downgrade(&r));
-        (r, self.map.insert(k, weak))
+        (Ok(r), self.map.insert(k, weak))
+    }
+    /// 移除等待的接收器
+    pub fn remove(&mut self, k: &A::Key) -> Option<AssetResult<A>> {
+        self.map.remove(k)
     }
     /// 超时整理方法， 清理最小容量外的超时资产
     pub fn timeout_collect<G: Garbageer<A>>(
