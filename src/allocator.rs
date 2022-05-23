@@ -162,7 +162,8 @@ impl Allocator {
         P: AsyncTaskPoolExt<()> + AsyncTaskPool<(), Pool = P>,
     {
         let rt1 = rt.clone();
-        let _ = rt.clone().spawn(rt.alloc(), async move {
+        let id = rt.alloc();
+        let _ = rt.spawn(id, async move {
             loop {
                 rt1.wait_timeout(interval).await;
                 self.collect(now_millisecond());

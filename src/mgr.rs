@@ -344,8 +344,15 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
             self.garbage.finished();
         }
     }
-    /// 迭代
-    pub fn iter<Arg>(&self, arg: &mut Arg, func: fn(&mut Arg, k: &A::Key, v: &A, u64)) {
+    /// 迭代使用表的键
+    pub fn map_keys<Arg>(&self, arg: &mut Arg, func: fn(&mut Arg, k: &A::Key)) {
+        let table = self.lock.0.lock();
+        for k in table.map_keys() {
+            func(arg, k)
+        }
+    }
+    /// 迭代缓存
+    pub fn cache_iter<Arg>(&self, arg: &mut Arg, func: fn(&mut Arg, k: &A::Key, v: &A, u64)) {
         let table = self.lock.0.lock();
         for (k, item) in table.cache_iter() {
             func(arg, k, &item.0, item.1)
