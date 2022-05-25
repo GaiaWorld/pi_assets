@@ -6,7 +6,7 @@ use pi_cache::{Cache, Data, Iter, Metrics};
 use pi_hash::XHashMap;
 use pi_share::{Share, ShareMutex, ShareUsize, ShareWeak};
 use pi_time::now_millisecond;
-use std::collections::hash_map::Entry;
+use std::collections::hash_map::{Entry, Keys};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::io::Result;
@@ -152,6 +152,10 @@ impl<A: Asset> AssetTable<A> {
     /// 判断是否有指定键的数据
     pub fn contains_key(&self, k: &A::Key) -> bool {
         self.map.contains_key(k) || self.cache.contains_key(k)
+    }
+    /// 获得使用表的键迭代器
+    pub fn map_keys(&self) -> Keys<'_, <A as Asset>::Key, AssetResult<A>> {
+        self.map.keys()
     }
     /// 获得缓存的迭代器
     pub fn cache_iter(&self) -> Iter<'_, <A as Asset>::Key, Item<A>> {
