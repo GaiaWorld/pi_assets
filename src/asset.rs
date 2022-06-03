@@ -74,9 +74,9 @@ impl<A: Asset> Droper<A> {
         }
     }
 
-	pub fn key(&self) -> &A::Key {
-		&self.key
-	}
+    pub fn key(&self) -> &A::Key {
+        &self.key
+    }
 }
 impl<A: Asset> Drop for Droper<A> {
     fn drop(&mut self) {
