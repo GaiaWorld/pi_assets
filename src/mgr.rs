@@ -55,7 +55,7 @@ impl<A: Asset, G: Garbageer<A>> Receiver<A, G> {
     }
 }
 /// 单类型资产管理器
-pub struct AssetMgr<A: Asset, G: Garbageer<A>> {
+pub struct AssetMgr<A: Asset, G: Garbageer<A> = GarbageEmpty> {
     /// 资产锁， 包括正在使用及缓存的资产表，及当前资产的大小
     lock: Lock<A>,
     /// 当前资产的数量
