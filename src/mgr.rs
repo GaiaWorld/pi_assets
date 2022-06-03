@@ -311,9 +311,13 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
         }
         let b = {
             let mut table = self.lock.0.lock();
-            let t = min_capacity + table.cache_size();
+            let mut c = table.cache_size();
+            if c == 0 {
+                return;
+            }
+            c += min_capacity;
             // 获得对应缓存部分的容量， 容量-使用大小
-            let c = if size < t { t - size } else { 0 };
+            let c = if size < c { c - size } else { 0 };
             let (len, sub) = table.timeout_collect(&self.garbage, c, now, self.ref_garbage_lock);
             self.len.fetch_sub(len, Ordering::Acquire);
             self.lock.1.fetch_sub(sub, Ordering::Acquire);
@@ -323,18 +327,21 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
             self.garbage.finished();
         }
     }
-    /// 超容量整理， 并设置当前容量
+    /// 超容量整理
     pub fn capacity_collect(&self, capacity: usize) {
-        self.capacity.store(capacity, Ordering::Release);
         let size = self.lock.1.load(Ordering::Acquire);
         if size <= capacity {
             return;
         }
         let b = {
             let mut table = self.lock.0.lock();
-            let t = capacity + table.cache_size();
+            let mut c = table.cache_size();
+            if c == 0 {
+                return;
+            }
+            c += capacity;
             // 获得对应缓存部分的容量， 容量-使用大小
-            let c = if size < t { t - size } else { 0 };
+            let c = if size < c { c - size } else { 0 };
             let (len, sub) = table.capacity_collect(&self.garbage, c, self.ref_garbage_lock);
             self.len.fetch_sub(len, Ordering::Acquire);
             self.lock.1.fetch_sub(sub, Ordering::Acquire);

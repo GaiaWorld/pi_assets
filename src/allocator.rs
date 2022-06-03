@@ -6,7 +6,19 @@ use pi_share::Share;
 use pi_time::now_millisecond;
 
 use crate::asset::*;
+use crate::homogeneous::{Garbageer as Gar, HomogeneousMgr};
 use crate::mgr::AssetMgr;
+
+pub trait Collect: Send + Sync {
+    /// 设置整理器的容量
+    fn set_capacity(&self, capacity: usize);
+    /// 获得整理器的大小
+    fn size(&self) -> usize;
+    /// 超时整理方法， 清理最小容量外的超时资产
+    fn timeout_collect(&self, capacity: usize, now: u64);
+    /// 超量整理方法， 清理超出容量的资产
+    fn capacity_collect(&self, capacity: usize);
+}
 
 // 默认满容量的比例
 const FULL: f32 = 0.9;
@@ -39,13 +51,8 @@ impl Allocator {
             temp_overflow: Vec::new(),
         }
     }
-    /// 在指定组别上注册指定加载器的资产管理器，要求必须单线程注册
-    pub fn register<A: Asset + Send + Sync, G: Garbageer<A>>(
-        &mut self,
-        mgr: Share<AssetMgr<A, G>>,
-        min_capacity: usize,
-        max_capacity: usize,
-    ) {
+    /// 注册可被整理的管理器，要求必须单线程注册
+    pub fn register(&mut self, mgr: Share<dyn Collect>, min_capacity: usize, max_capacity: usize) {
         self.min_capacity += min_capacity;
         self.max_capacity += max_capacity;
         let item = Item {
@@ -153,6 +160,7 @@ impl Allocator {
         // 超量整理
         for i in self.vec.iter() {
             // println!("size:{:?}, capacity:{:?}", i.mgr.size(), i.capacity);
+            i.mgr.set_capacity(i.capacity);
             i.mgr.capacity_collect(i.capacity);
         }
     }
@@ -172,22 +180,31 @@ impl Allocator {
     }
 }
 struct Item {
-    mgr: Share<dyn Collect + 'static>,
+    mgr: Share<dyn Collect>,
     min_capacity: usize,
     max_capacity: usize,
     weight_capacity: usize,
     capacity: usize,
 }
 
-trait Collect: Send + Sync {
-    /// 获得资产的大小
-    fn size(&self) -> usize;
-    /// 超时整理方法， 清理最小容量外的超时资产
-    fn timeout_collect(&self, capacity: usize, now: u64);
-    /// 超量整理方法， 按照先进先出的原则，清理超出容量的资产
-    fn capacity_collect(&self, capacity: usize);
-}
 impl<A: Asset, G: Garbageer<A>> Collect for AssetMgr<A, G> {
+    fn set_capacity(&self, capacity: usize) {
+        self.set_capacity(capacity)
+    }
+    fn size(&self) -> usize {
+        self.size()
+    }
+    fn timeout_collect(&self, capacity: usize, now: u64) {
+        self.timeout_collect(capacity, now)
+    }
+    fn capacity_collect(&self, capacity: usize) {
+        self.capacity_collect(capacity)
+    }
+}
+impl<V, G: Gar<V>> Collect for HomogeneousMgr<V, G> {
+    fn set_capacity(&self, capacity: usize) {
+        self.set_capacity(capacity)
+    }
     fn size(&self) -> usize {
         self.size()
     }
