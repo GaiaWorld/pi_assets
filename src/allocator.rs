@@ -1,6 +1,6 @@
 //! 多个资产管理器的容量分配器
 
-use pi_async::rt::{AsyncRuntime, AsyncTaskPool, AsyncTaskPoolExt};
+use pi_async::rt::AsyncRuntime;
 
 use pi_share::Share;
 use pi_time::now_millisecond;
@@ -165,15 +165,15 @@ impl Allocator {
         }
     }
     /// 用指定的间隔时间进行自动整理
-    pub fn auto_collect<P>(mut self, rt: AsyncRuntime<(), P>, interval: usize)
+    pub fn auto_collect<RT>(mut self, rt: RT, interval: usize)
     where
-        P: AsyncTaskPoolExt<()> + AsyncTaskPool<(), Pool = P>,
+        RT: AsyncRuntime<()>
     {
         let rt1 = rt.clone();
         let id = rt.alloc();
         let _ = rt.spawn(id, async move {
             loop {
-                rt1.wait_timeout(interval).await;
+                rt1.timeout(interval).await;
                 self.collect(now_millisecond());
             }
         });
