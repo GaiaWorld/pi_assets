@@ -219,7 +219,7 @@ impl<V, G: Gar<V>> Collect for HomogeneousMgr<V, G> {
 #[cfg(test)]
 mod test_mod {
     use crate::{allocator::Allocator, asset::*, mgr::*};
-    use pi_async::rt::multi_thread::MultiTaskRuntimeBuilder;
+    use pi_async::rt::{multi_thread::MultiTaskRuntimeBuilder, AsyncRuntime};
     use std::time::Duration;
 
     #[derive(Debug, Eq, PartialEq)]

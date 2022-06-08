@@ -126,11 +126,11 @@ impl<V, G: Garbageer<V>> HomogeneousMgr<V, G> {
         })
     }
     /// 获取一个被过滤器选中的同质资产
-    pub fn get_by_filter<P>(&self, mut pred: P) -> Option<V>
+    pub fn get_by_filter<P>(&self, mut pred: P) -> Option<Droper<V>>
     where
-        P: FnMut(&T) -> bool {
+        P: FnMut(&V) -> bool {
         let mut pool = self.lock.pool.lock();
-        let i = pool.partition_point(pred);
+        let i = pool.partition_point(| i | pred(&i.0));
         if i >= pool.len() {
             return None
         }
@@ -155,9 +155,9 @@ impl<V, G: Garbageer<V>> HomogeneousMgr<V, G> {
     /// 弹出一个被过滤器选中的同质资产
     pub fn pop_by_filter<P>(&self, mut pred: P) -> Option<V>
     where
-        P: FnMut(&T) -> bool {
+        P: FnMut(&V) -> bool {
         let mut pool = self.lock.pool.lock();
-        let i = pool.partition_point(pred);
+        let i = pool.partition_point(| i | pred(&i.0));
         if i >= pool.len() {
             return None
         }

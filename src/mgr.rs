@@ -378,6 +378,7 @@ fn fetch(i: &ShareUsize, add: usize, sub: usize) {
 #[cfg(test)]
 mod test_mod {
     use crate::{asset::*, mgr::*};
+    use pi_async::rt::AsyncRuntime;
     use pi_async::rt::multi_thread::{MultiTaskRuntime, MultiTaskRuntimeBuilder};
     use pi_share::cell::TrustCell;
     use pi_time::now_millisecond;
@@ -409,7 +410,7 @@ mod test_mod {
             LoadResult::Ok(r) => Ok(r),
             LoadResult::Wait(f) => f.await,
             LoadResult::Receiver(recv) => {
-                p.wait_timeout(1).await;
+                p.timeout(1).await;
                 println!("---------------load:{:?}", k);
                 recv.receive(k, Ok(R1(TrustCell::new((k, k, 0))))).await
             }
@@ -458,12 +459,12 @@ mod test_mod {
                     let mut x = rrr.0.borrow_mut();
                     x.1 += k * 10;
                     rr.adjust_size((k * 10) as isize);
-                    rt2.wait_timeout(1).await;
+                    rt2.timeout(1).await;
                 }
             });
 
             loop {
-                rt1.wait_timeout(1000).await;
+                rt1.timeout(1000).await;
                 let now = now_millisecond();
                 println!("----time:{}, mgr2:{:?}", now, mgr.info());
                 mgr.timeout_collect(0, now);
