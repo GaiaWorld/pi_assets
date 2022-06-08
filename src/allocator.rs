@@ -167,7 +167,7 @@ impl Allocator {
     /// 用指定的间隔时间进行自动整理
     pub fn auto_collect<RT>(mut self, rt: RT, interval: usize)
     where
-        RT: AsyncRuntime<()>
+        RT: AsyncRuntime
     {
         let rt1 = rt.clone();
         let id = rt.alloc();
