@@ -125,6 +125,20 @@ impl<V, G: Garbageer<V>> HomogeneousMgr<V, G> {
             lock: &self.lock as *const Lock<V> as usize,
         })
     }
+    /// 获取一个被过滤器选中的同质资产
+    pub fn get_by_filter<P>(&self, mut pred: P) -> Option<V>
+    where
+        P: FnMut(&T) -> bool {
+        let mut pool = self.lock.pool.lock();
+        let i = pool.partition_point(pred);
+        if i >= pool.len() {
+            return None
+        }
+        Some(Droper {
+            data: Some(pool.swap_remove_front(i).unwrap().0),
+            lock: &self.lock as *const Lock<V> as usize,
+        })
+    }
     /// 缓存同质资产
     pub fn push(&self, v: V) {
         let timeout = self.lock.timeout as u64 + now_millisecond();
@@ -137,6 +151,17 @@ impl<V, G: Garbageer<V>> HomogeneousMgr<V, G> {
             self.lock.len.fetch_sub(1, Ordering::Release);
             item.0
         })
+    }
+    /// 弹出一个被过滤器选中的同质资产
+    pub fn pop_by_filter<P>(&self, mut pred: P) -> Option<V>
+    where
+        P: FnMut(&T) -> bool {
+        let mut pool = self.lock.pool.lock();
+        let i = pool.partition_point(pred);
+        if i >= pool.len() {
+            return None
+        }
+        Some(pool.swap_remove_front(i).unwrap().0)
     }
     /// 超时整理
     pub fn timeout_collect(&self, min_capacity: usize, now: u64) {
