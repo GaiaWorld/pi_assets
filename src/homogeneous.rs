@@ -128,11 +128,18 @@ impl<V, G: Garbageer<V>> HomogeneousMgr<V, G> {
     /// 获取一个被过滤器选中的同质资产
     pub fn get_by_filter<P>(&self, mut pred: P) -> Option<Droper<V>>
     where
-        P: FnMut(&V) -> bool {
+        P: FnMut(&V) -> bool,
+    {
         let mut pool = self.lock.pool.lock();
-        let i = pool.partition_point(| i | pred(&i.0));
+        let mut i = 0;
+        for item in pool.iter() {
+            if pred(&item.0) {
+                break;
+            }
+            i += 1;
+        }
         if i >= pool.len() {
-            return None
+            return None;
         }
         Some(Droper {
             data: Some(pool.swap_remove_front(i).unwrap().0),
@@ -155,11 +162,12 @@ impl<V, G: Garbageer<V>> HomogeneousMgr<V, G> {
     /// 弹出一个被过滤器选中的同质资产
     pub fn pop_by_filter<P>(&self, mut pred: P) -> Option<V>
     where
-        P: FnMut(&V) -> bool {
+        P: FnMut(&V) -> bool,
+    {
         let mut pool = self.lock.pool.lock();
-        let i = pool.partition_point(| i | pred(&i.0));
+        let i = pool.partition_point(|i| pred(&i.0));
         if i >= pool.len() {
-            return None
+            return None;
         }
         Some(pool.swap_remove_front(i).unwrap().0)
     }
