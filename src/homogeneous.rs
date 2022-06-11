@@ -165,7 +165,13 @@ impl<V, G: Garbageer<V>> HomogeneousMgr<V, G> {
         P: FnMut(&V) -> bool,
     {
         let mut pool = self.lock.pool.lock();
-        let i = pool.partition_point(|i| pred(&i.0));
+        let mut i = 0;
+        for item in pool.iter() {
+            if pred(&item.0) {
+                break;
+            }
+            i += 1;
+        }
         if i >= pool.len() {
             return None;
         }
