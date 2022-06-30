@@ -58,7 +58,7 @@ pub struct HomogeneousMgrInfo {
 }
 
 /// 同质资产管理器
-pub struct HomogeneousMgr<V, G: Garbageer<V>> {
+pub struct HomogeneousMgr<V, G: Garbageer<V> = GarbageEmpty> {
     /// 同质资产锁， 包括正在缓存的同质资产池，及当前同质资产的数量
     lock: Lock<V>,
     /// 单个同质资产的大小
