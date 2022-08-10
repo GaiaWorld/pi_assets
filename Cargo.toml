@@ -1,6 +1,6 @@
 [package]
 name = "pi_assets"
-version = "0.7.5"
+version = "0.7.6"
 authors = ["zmax <zmax@gaia.world>"]
 edition = "2021"
 description = "assets manager, async load assets, The capacity of multiple managers is managed uniformly"
@@ -16,7 +16,7 @@ log = "0.4"
 pi_time = "0.1"
 pi_cache = "0.3"
 pi_hash = "0.1"
-pi_async = "0.2"
+pi_async = "0.4"
 pi_share = "0.2"
 futures = "0.3"
 flume = "0.10"
