@@ -3,7 +3,7 @@
 //! 加载新资源和定时整理时，会清理缓存，并调用回收器
 
 use crate::asset::*;
-use futures::future::BoxFuture;
+use pi_futures::BoxFuture;
 use futures::{io, FutureExt};
 use pi_cache::Metrics;
 use pi_cache::{FREQUENCY_DOWN_RATE, WINDOW_SIZE};
@@ -378,8 +378,8 @@ fn fetch(i: &ShareUsize, add: usize, sub: usize) {
 #[cfg(test)]
 mod test_mod {
     use crate::{asset::*, mgr::*};
-    use pi_async::rt::AsyncRuntime;
-    use pi_async::rt::multi_thread::{MultiTaskRuntime, MultiTaskRuntimeBuilder};
+    use pi_async::prelude::AsyncRuntime;
+    use pi_async::prelude::multi_thread::{MultiTaskRuntime, MultiTaskRuntimeBuilder};
     use pi_share::cell::TrustCell;
     use pi_time::now_millisecond;
     use std::ops::Deref;

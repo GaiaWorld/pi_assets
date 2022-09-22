@@ -1,6 +1,6 @@
 //! 多个资产管理器的容量分配器
 
-use pi_async::rt::AsyncRuntime;
+use pi_async::prelude::AsyncRuntime;
 
 use pi_share::Share;
 use pi_time::now_millisecond;
@@ -219,7 +219,7 @@ impl<V, G: Gar<V>> Collect for HomogeneousMgr<V, G> {
 #[cfg(test)]
 mod test_mod {
     use crate::{allocator::Allocator, asset::*, mgr::*};
-    use pi_async::rt::{multi_thread::MultiTaskRuntimeBuilder, AsyncRuntime};
+    use pi_async::prelude::{multi_thread::MultiTaskRuntimeBuilder, AsyncRuntime};
     use std::time::Duration;
 
     #[derive(Debug, Eq, PartialEq)]
