@@ -247,7 +247,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
         // 离开同步锁范围
         if let Some(r) = receiver {
             // 已经在异步加载中， 返回await等待
-            let f = async move {
+            let f = Box::pin( async move {
                 match r.recv_async().await {
                     Ok(r) => r,
                     Err(e) => {
@@ -258,8 +258,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
                         ))
                     }
                 }
-            }
-            .boxed();
+            });
             return LoadResult::Wait(f);
         }
         return LoadResult::Receiver(Receiver(mgr.clone()));
