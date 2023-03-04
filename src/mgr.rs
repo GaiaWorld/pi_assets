@@ -4,13 +4,14 @@
 
 use crate::asset::*;
 use pi_futures::BoxFuture;
-use futures::{io, FutureExt};
+use futures::{io};
 use pi_cache::Metrics;
 use pi_cache::{FREQUENCY_DOWN_RATE, WINDOW_SIZE};
 use pi_share::{Share, ShareMutex, ShareUsize};
 use std::fmt::Debug;
 use std::io::{Error, ErrorKind};
 use std::sync::atomic::Ordering;
+use std::result::Result;
 
 #[derive(Debug)]
 pub struct AssetMgrInfo {
@@ -153,7 +154,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
     /// 缓存指定的资产
     pub fn cache(&self, k: A::Key, v: A) -> Option<A> {
         let add = v.size();
-        let (r, b) = {
+        let (r, len) = {
             let mut table = self.lock.0.lock();
             let r = table.cache(k, v);
             let (mut len, mut sub) = if let Some(r) = &r {
@@ -176,40 +177,54 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
             }
             fetch(&self.len, 1, len);
             fetch(&self.lock.1, add, sub);
-            (r, len > 0)
+            (r, len)
         };
-        if b {
+        if len > 0 {
             self.garbage.finished();
         }
         r
     }
-    /// 放入资产， 并获取资产句柄
-    pub fn insert(&self, k: A::Key, v: A) -> Option<Handle<A>> {
+    /// 放入资产， 并获取资产句柄， 如果已有资产，则重用已有资产。返回Err表示正在异步加载等待
+    pub fn insert(&self, k: A::Key, mut v: A) -> Result<Handle<A>, A> {
         let add = v.size();
         let lock = &self.lock as *const Lock<A> as usize;
-        let (r, b) = {
+        let (r, len) = loop {
             let mut table = self.lock.0.lock();
-            let r = table.insert(k, v, lock);
-            let (len, sub) = if r.is_some() {
-                let amount = self.lock.1.load(Ordering::Acquire);
-                let capacity = self.capacity.load(Ordering::Acquire);
-                let size = amount + add;
-                if size > capacity {
-                    let t = capacity + table.cache_size();
-                    // 获得对应缓存部分的容量， 容量-使用大小
-                    let c = if size < t { t - size } else { 0 };
-                    table.capacity_collect(&self.garbage, c, self.ref_garbage_lock)
-                } else {
-                    (0, 0)
+            let (r, b) = table.insert(k.clone(), v, lock);
+            let r = match r {
+                Ok(h) => {
+                    if b {
+                        // 表示为已有资产
+                        return Ok(h)
+                    }
+                    h
+                },
+                Err(e) => {
+                    if b {
+                        // b 表示正在释放，退出当前的锁，循环尝试
+                        v = e;
+                        continue
+                    }
+                    return Err(e)
                 }
+            };
+            // 表示新插入，需要统计大小数量及清理
+            let amount = self.lock.1.load(Ordering::Acquire);
+            let capacity = self.capacity.load(Ordering::Acquire);
+            let size = amount + add;
+            let (len, sub) = if size > capacity {
+                let t = capacity + table.cache_size();
+                // 获得对应缓存部分的容量， 容量-使用大小
+                let c = if size < t { t - size } else { 0 };
+                table.capacity_collect(&self.garbage, c, self.ref_garbage_lock)
             } else {
                 (0, 0)
             };
             fetch(&self.len, 1, len);
             fetch(&self.lock.1, add, sub);
-            (r, len > 0)
+            break (Ok(r), len)
         };
-        if b {
+        if len > 0 {
             self.garbage.finished();
         }
         r
@@ -273,7 +288,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
             Ok(v) => {
                 let add = v.size();
                 let lock = &self.lock as *const Lock<A> as usize;
-                let (r, b) = {
+                let (r, len) = {
                     let mut table = self.lock.0.lock();
                     let amount = self.lock.1.load(Ordering::Acquire);
                     let capacity = self.capacity.load(Ordering::Acquire);
@@ -288,9 +303,9 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
                     };
                     fetch(&self.len, 1, len);
                     fetch(&self.lock.1, add, sub);
-                    (table.receive(k, v, lock), len > 0)
+                    (table.receive(k, v, lock), len)
                 };
-                if b {
+                if len > 0 {
                     self.garbage.finished();
                 }
                 r

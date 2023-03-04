@@ -83,7 +83,6 @@ impl<A: Asset> Drop for Droper<A> {
         let v = unsafe { self.data.take().unwrap_unchecked() };
         let lock: &Lock<A> = unsafe { &*(self.lock as *const Lock<A>) };
         let mut table = lock.0.lock();
-        // table.size -= v.size();
         table.map.remove(&self.key);
         let timeout = table.timeout as u64 + now_millisecond();
         table.cache.put(self.key.clone(), Item(v, timeout));
@@ -171,19 +170,28 @@ impl<A: Asset> AssetTable<A> {
             .put(k, Item(v, self.timeout as u64 + now_millisecond()))
             .map(|v| v.0)
     }
-    /// 放入资产， 并获取资产句柄， 返回None表示已有条目
-    pub fn insert(&mut self, k: A::Key, v: A, lock: usize) -> Option<Handle<A>> {
+    /// 放入资产， 并获取资产句柄，如果已有资产，则重用已有资产
+    pub fn insert(&mut self, k: A::Key, v: A, lock: usize) -> (Result1<Handle<A>, A>, bool) {
         match self.map.entry(k) {
-            Entry::Occupied(_) => None,
+            Entry::Occupied(e) => match e.get() {
+                AssetResult::Ok(r) => match r.upgrade() {
+                    Some(r) => (Ok(r), true),
+                    None => (Err(v), true)
+                },
+                _ => (Err(v), false)
+            },
             Entry::Vacant(e) => {
-                // self.size += v.size();
+                let (v, b) = match self.cache.take(e.key()) {
+                    Some(v) => (v.0, true),
+                    None => (v, false),
+                };
                 let r = Share::new(Droper {
                     key: e.key().clone(),
                     data: Some(v),
                     lock,
                 });
                 e.insert(AssetResult::Ok(Share::downgrade(&r)));
-                Some(r)
+                (Ok(r), b)
             }
         }
     }
@@ -196,13 +204,12 @@ impl<A: Asset> AssetTable<A> {
             },
             Entry::Vacant(e) => {
                 let v = match self.cache.take(e.key()) {
-                    Some(v) => v,
+                    Some(v) => v.0,
                     None => return None,
                 };
-                // self.size += v.0.size();
                 let r = Share::new(Droper {
                     key: e.key().clone(),
-                    data: Some(v.0),
+                    data: Some(v),
                     lock,
                 });
                 e.insert(AssetResult::Ok(Share::downgrade(&r)));
