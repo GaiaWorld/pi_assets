@@ -6,7 +6,7 @@ use pi_share::Share;
 use pi_time::now_millisecond;
 
 use crate::asset::*;
-use crate::homogeneous::{Garbageer as Gar, HomogeneousMgr};
+use crate::homogeneous::{Garbageer as Gar, HomogeneousMgr, Size};
 use crate::mgr::AssetMgr;
 
 pub trait Collect: Send + Sync {
@@ -94,11 +94,21 @@ impl Allocator {
             } else {
                 0
             };
-            // 计算每个资产分组缓存队列的权重容量
-            for i in self.vec.iter_mut() {
-                i.weight_capacity = i.min_capacity + (i.max_capacity - i.min_capacity) * c2 / c1;
-                i.capacity = i.weight_capacity;
+            if c1 > usize::MAX / c1 {
+                let f = c2 as f64 / c1 as f64;
+                // 计算每个资产分组缓存队列的权重容量
+                for i in self.vec.iter_mut() {
+                    i.weight_capacity = i.min_capacity + ((i.max_capacity - i.min_capacity) as f64 * f) as usize;
+                    i.capacity = i.weight_capacity;
+                }
+            }else{
+                // 计算每个资产分组缓存队列的权重容量
+                for i in self.vec.iter_mut() {
+                    i.weight_capacity = i.min_capacity + (i.max_capacity - i.min_capacity) * c2 / c1;
+                    i.capacity = i.weight_capacity;
+                }
             }
+            
         }
         // 最小容量下，仅进行最小容量清理操作
         if self.total_capacity <= self.min_capacity {
@@ -201,7 +211,7 @@ impl<A: Asset, G: Garbageer<A>> Collect for AssetMgr<A, G> {
         self.capacity_collect(capacity)
     }
 }
-impl<V, G: Gar<V>> Collect for HomogeneousMgr<V, G> {
+impl<V: Size, G: Gar<V>> Collect for HomogeneousMgr<V, G> {
     fn set_capacity(&self, capacity: usize) {
         self.set_capacity(capacity)
     }
