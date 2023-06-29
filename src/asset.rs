@@ -15,13 +15,17 @@ use std::result::Result as Result1;
 use std::sync::atomic::Ordering;
 
 /// 资产定义
-pub trait Asset: 'static {
-    /// 关联键的类型
-    type Key: Hash + Eq + Clone + Debug;
+pub trait Size: 'static {
     /// 资产的大小
     fn size(&self) -> usize {
         1
     }
+}
+
+/// 资产定义
+pub trait Asset: Size {
+    /// 关联键的类型
+    type Key: Hash + Eq + Clone + Debug;
 }
 
 /// 回收器定义

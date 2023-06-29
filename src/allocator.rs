@@ -6,7 +6,7 @@ use pi_share::Share;
 use pi_time::now_millisecond;
 
 use crate::asset::*;
-use crate::homogeneous::{Garbageer as Gar, HomogeneousMgr, Size};
+use crate::homogeneous::{Garbageer as Gar, HomogeneousMgr};
 use crate::mgr::AssetMgr;
 
 pub trait Collect: Send + Sync {

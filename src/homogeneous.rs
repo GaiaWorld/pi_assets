@@ -7,14 +7,7 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::Deref;
 use std::sync::atomic::Ordering;
-
-/// 资产定义
-pub trait Size: 'static {
-    /// 资产的大小
-    fn size(&self) -> usize {
-        1
-    }
-}
+use crate::asset::Size;
 
 /// 回收器定义
 pub trait Garbageer<V: Size>: 'static {
