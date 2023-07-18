@@ -1,6 +1,6 @@
 //! 多个资产管理器的容量分配器
 
-use pi_async::prelude::AsyncRuntime;
+use pi_async_rt::prelude::AsyncRuntime;
 
 use pi_share::Share;
 use pi_time::now_millisecond;
@@ -180,8 +180,7 @@ impl Allocator {
         RT: AsyncRuntime
     {
         let rt1 = rt.clone();
-        let id = rt.alloc();
-        let _ = rt.spawn(id, async move {
+        let _ = rt.spawn(async move {
             loop {
                 rt1.timeout(interval).await;
                 self.collect(now_millisecond());
@@ -229,7 +228,7 @@ impl<V: Size, G: Gar<V>> Collect for HomogeneousMgr<V, G> {
 #[cfg(test)]
 mod test_mod {
     use crate::{allocator::Allocator, asset::*, mgr::*};
-    use pi_async::prelude::{multi_thread::MultiTaskRuntimeBuilder, AsyncRuntime};
+    use pi_async_rt::prelude::{multi_thread::MultiTaskRuntimeBuilder, AsyncRuntime, startup_global_time_loop};
     use std::time::Duration;
 
     #[derive(Debug, Eq, PartialEq)]
@@ -237,6 +236,8 @@ mod test_mod {
 
     impl Asset for R1 {
         type Key = usize;
+    }
+    impl Size for R1 {
         /// 资源的大小
         fn size(&self) -> usize {
             self.1
@@ -247,6 +248,8 @@ mod test_mod {
 
     impl Asset for R2 {
         type Key = usize;
+    }
+    impl Size for R2 {
         /// 资源的大小
         fn size(&self) -> usize {
             self.1
@@ -257,6 +260,8 @@ mod test_mod {
 
     impl Asset for R3 {
         type Key = usize;
+    }
+    impl Size for R3 {
         /// 资源的大小
         fn size(&self) -> usize {
             self.1
@@ -265,9 +270,10 @@ mod test_mod {
 
     #[test]
     pub fn test() {
+        let _handle = startup_global_time_loop(100);
         let pool = MultiTaskRuntimeBuilder::default();
         let rt0 = pool.build();
-        let _ = rt0.spawn(rt0.alloc(), async move {
+        let _ = rt0.spawn(async move {
             let mgr = AssetMgr::<R1, _>::new(GarbageEmpty(), false, 1024 * 1024, 3 * 60 * 1000);
             let m = AssetMgr::<R2, _>::new(GarbageEmpty(), false, 1024 * 1024, 3 * 60 * 1000);
             let mm = AssetMgr::<R3, _>::new(GarbageEmpty(), false, 1024 * 1024, 3 * 60 * 1000);

@@ -392,8 +392,8 @@ fn fetch(i: &ShareUsize, add: usize, sub: usize) {
 #[cfg(test)]
 mod test_mod {
     use crate::{asset::*, mgr::*};
-    use pi_async::prelude::AsyncRuntime;
-    use pi_async::prelude::multi_thread::{MultiTaskRuntime, MultiTaskRuntimeBuilder};
+    use pi_async_rt::prelude::AsyncRuntime;
+    use pi_async_rt::prelude::multi_thread::{MultiTaskRuntime, MultiTaskRuntimeBuilder};
     use pi_share::cell::TrustCell;
     use pi_time::now_millisecond;
     use std::ops::Deref;
@@ -410,6 +410,8 @@ mod test_mod {
 
     impl Asset for R1 {
         type Key = usize;
+    }
+    impl Size for R1 {
         /// 资源的大小
         fn size(&self) -> usize {
             self.0.borrow().1
@@ -438,7 +440,7 @@ mod test_mod {
         }
         fn garbage_ref(&self, k: &usize, _v: &R1, _timeout: u64, guard: GarbageGuard<R1>) {
             let _key = k.clone();
-            let _ = self.0.spawn(self.0.alloc(), async move {
+            let _ = self.0.spawn(async move {
                 let a = guard;
                 println!("garbage_guard: {:?}", a);
             });
@@ -458,13 +460,13 @@ mod test_mod {
         let mgr = AssetMgr::new(G(rt1.clone()), true, 1024 * 1024, 3 * 60 * 1000);
         let mgr1 = mgr.clone();
         mgr.set_capacity(5500);
-        let _ = rt0.spawn(rt0.alloc(), async move {
+        let _ = rt0.spawn(async move {
             for i in 1..100 {
                 let _r = load(&mgr1, i, rt1.clone()).await.unwrap();
             }
             println!("----rrr:{:?}", mgr.info());
             let rt2 = rt1.clone();
-            let _ = rt1.spawn(rt1.alloc(), async move {
+            let _ = rt1.spawn(async move {
                 loop {
                     let k = (rng.next_u32() % 150) as usize;
                     let r = load(&mgr1, k, rt2.clone()).await.unwrap();
