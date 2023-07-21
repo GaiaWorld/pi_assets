@@ -392,8 +392,8 @@ fn fetch(i: &ShareUsize, add: usize, sub: usize) {
 #[cfg(test)]
 mod test_mod {
     use crate::{asset::*, mgr::*};
-    use pi_async::prelude::AsyncRuntime;
-    use pi_async::prelude::multi_thread::{MultiTaskRuntime, MultiTaskRuntimeBuilder};
+    use pi_async_rt::prelude::AsyncRuntime;
+    use pi_async_rt::prelude::multi_thread::{MultiTaskRuntime, MultiTaskRuntimeBuilder};
     use pi_share::cell::TrustCell;
     use pi_time::now_millisecond;
     use std::ops::Deref;
