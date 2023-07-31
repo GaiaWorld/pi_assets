@@ -94,7 +94,7 @@ impl Allocator {
             } else {
                 0
             };
-            if c1 > usize::MAX / c1 {
+            if c1 != 0 && c1 > usize::MAX / c1 {
                 let f = c2 as f64 / c1 as f64;
                 // 计算每个资产分组缓存队列的权重容量
                 for i in self.vec.iter_mut() {
@@ -151,9 +151,10 @@ impl Allocator {
         if free_size > overflow_size {
             let size = free_size - overflow_size;
             // 空闲比溢出的多，表示需要扩张容量，将满的条目按capacity权重进行扩大
+			
             for index in &self.temp_full {
                 let item = &mut self.vec[*index];
-                let fix = size * item.capacity / full_size;
+                let fix = (size as f64 * (item.capacity as f64 / full_size as f64)) as usize;
                 item.capacity += fix;
             }
         } else if free_size < overflow_size {
@@ -161,7 +162,7 @@ impl Allocator {
             // 空闲比溢出的少，表示需要收缩，将溢出的条目按overflow权重进行缩小
             for (index, overflow) in &self.temp_overflow {
                 let item = &mut self.vec[*index];
-                let fix = size * *overflow / overflow_size;
+                let fix = (size as f64 * (*overflow as f64 / overflow_size as f64)) as usize;
                 item.capacity = item.weight_capacity + *overflow - fix;
             }
         }
