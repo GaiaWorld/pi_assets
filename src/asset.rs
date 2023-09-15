@@ -14,6 +14,8 @@ use std::ops::Deref;
 use std::result::Result as Result1;
 use std::sync::atomic::Ordering;
 
+use crate::allocator::{AssetMgrAccount, AssetInfo};
+
 /// 资产定义
 pub trait Size: 'static {
     /// 资产的大小
@@ -342,6 +344,34 @@ impl<A: Asset> AssetTable<A> {
         }
         (l, s)
     }
+
+	/// 资源大小
+	pub fn account(&self, account: &mut AssetMgrAccount) {
+		for (k, item) in self.cache.iter() {
+			let size = item.size() as f32 / 1024.0;
+            account.unused.push(AssetInfo {
+                name: format!("{k:?}"),
+                size,
+                remain_timeout: if item.timeout() > now_millisecond() {item.timeout() - now_millisecond()} else {0},
+            });
+			account.unused_size += size;
+        }
+
+		for (k, item) in self.map.iter() {
+			if let AssetResult::Ok(r) = item {
+				if let Some(r) = ShareWeak::upgrade(r) {
+					let size = r.size() as f32 / 1024.0;
+					account.used.push(AssetInfo {
+						name: format!("{k:?}"),
+						size,
+						remain_timeout: std::u64::MAX,
+					});
+
+					account.used_size += size;
+				}
+			}
+		}
+	}
 }
 
 /// 资产锁， 包括正在使用及缓存的资产表，及当前资产的大小

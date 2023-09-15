@@ -18,7 +18,10 @@ pub trait Collect: Send + Sync {
     fn timeout_collect(&self, capacity: usize, now: u64);
     /// 超量整理方法， 清理超出容量的资产
     fn capacity_collect(&self, capacity: usize);
+	/// 资源统计
+	fn account(&self) -> AssetMgrAccount;
 }
+
 
 // 默认满容量的比例
 const FULL: f32 = 0.9;
@@ -40,6 +43,7 @@ pub struct Allocator {
 }
 
 impl Allocator {
+
     /// 用指定的最大内存容量创建资产管理器
     pub fn new(total_capacity: usize) -> Self {
         Allocator {
@@ -188,6 +192,23 @@ impl Allocator {
             }
         });
     }
+
+	/// 统计资产管理器的缓冲情况
+	pub fn account(&self) -> AssetsAccount {
+		let mut r = AssetsAccount::default();
+		for item in self.vec.iter() {
+			let mut account = item.mgr.account();
+			account.min_capacity = item.min_capacity;
+			account.max_capacity = item.max_capacity;
+			account.weight_capacity = item.weight_capacity;
+			account.capacity = item.capacity;
+			r.total_size += account.used_size;
+			r.total_size += account.unused_size;
+			r.list.push(account);
+		}
+		r
+	}
+
 }
 struct Item {
     mgr: Share<dyn Collect>,
@@ -195,6 +216,40 @@ struct Item {
     max_capacity: usize,
     weight_capacity: usize,
     capacity: usize,
+}
+
+/// 每资产管理器信息
+#[derive(Debug, Clone, Default)]
+pub struct AssetMgrAccount {
+	pub name: String,
+	min_capacity: usize,
+    max_capacity: usize,
+    weight_capacity: usize,
+    capacity: usize,
+
+	pub used_size: f32, // 单位 k
+	pub used: Vec<AssetInfo>,
+
+	pub unused_size: f32, // 单位 k
+	pub unused: Vec<AssetInfo>,
+}
+
+/// 每资产信息
+#[derive(Debug, Clone)]
+pub struct AssetInfo {
+	/// 资源名称
+	pub name: String, 
+	/// 资源大小
+	pub size: f32, // 单位 k
+	// 剩余多长时间超时
+	pub remain_timeout: u64, 
+}
+
+/// 资产统计信息
+#[derive(Debug, Clone, Default)]
+pub struct AssetsAccount {
+	pub total_size: f32,
+	pub list: Vec<AssetMgrAccount>,
 }
 
 impl<A: Asset, G: Garbageer<A>> Collect for AssetMgr<A, G> {
@@ -210,6 +265,10 @@ impl<A: Asset, G: Garbageer<A>> Collect for AssetMgr<A, G> {
     fn capacity_collect(&self, capacity: usize) {
         self.capacity_collect(capacity)
     }
+	/// 资源大小
+	fn account(&self) -> AssetMgrAccount {
+		self.account()
+	}
 }
 impl<V: Size, G: Gar<V>> Collect for HomogeneousMgr<V, G> {
     fn set_capacity(&self, capacity: usize) {
@@ -224,6 +283,10 @@ impl<V: Size, G: Gar<V>> Collect for HomogeneousMgr<V, G> {
     fn capacity_collect(&self, capacity: usize) {
         self.capacity_collect(capacity)
     }
+	/// 资源大小
+	fn account(&self) -> AssetMgrAccount {
+		self.account()
+	}
 }
 
 #[cfg(test)]
@@ -237,6 +300,9 @@ mod test_mod {
 
     impl Asset for R1 {
         type Key = usize;
+    }
+
+	impl Size for R1 {
         /// 资源的大小
         fn size(&self) -> usize {
             self.1
@@ -247,6 +313,9 @@ mod test_mod {
 
     impl Asset for R2 {
         type Key = usize;
+    }
+
+	impl Size for R2 {
         /// 资源的大小
         fn size(&self) -> usize {
             self.1
@@ -257,6 +326,9 @@ mod test_mod {
 
     impl Asset for R3 {
         type Key = usize;
+    }
+
+	impl Size for R3 {
         /// 资源的大小
         fn size(&self) -> usize {
             self.1

@@ -2,9 +2,10 @@
 //! 包括了资产的重用，资产的加载
 //! 加载新资源和定时整理时，会清理缓存，并调用回收器
 
+use crate::allocator::AssetMgrAccount;
 use crate::asset::*;
 use pi_futures::BoxFuture;
-use futures::{io};
+use futures::io;
 use pi_cache::Metrics;
 use pi_cache::{FREQUENCY_DOWN_RATE, WINDOW_SIZE};
 use pi_share::{Share, ShareMutex, ShareUsize};
@@ -379,6 +380,16 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
             func(arg, k, &item.0, item.1)
         }
     }
+
+	/// 资源大小
+	pub fn account(&self) -> AssetMgrAccount {
+		let table = self.lock.0.lock();
+		let mut account = AssetMgrAccount::default();
+		table.account(&mut account);
+		account.name = std::any::type_name::<Self>().to_string();
+		account
+
+	}
 }
 
 fn fetch(i: &ShareUsize, add: usize, sub: usize) {

@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::Deref;
 use std::sync::atomic::Ordering;
+use crate::allocator::{AssetMgrAccount, AssetInfo};
 use crate::asset::Size;
 
 /// 回收器定义
@@ -235,6 +236,25 @@ impl<V: Size, G: Garbageer<V>> HomogeneousMgr<V, G> {
             self.lock.size.fetch_sub(sub, Ordering::Acquire);
         }
     }
+
+	/// 资源大小
+	pub fn account(&self) -> AssetMgrAccount {
+		let pool = self.lock.pool.lock();
+		let mut account = AssetMgrAccount::default();
+
+		for item in pool.0.iter() {
+			let size = item.0.size() as f32 / 1024.0;
+            account.unused.push(AssetInfo {
+                name: "".to_string(),
+                size,
+                remain_timeout: if item.1 > now_millisecond() {item.1 - now_millisecond()} else {0},
+            });
+			account.unused_size += size;
+		}
+		account.name = std::any::type_name::<Self>().to_string();
+		account
+
+	}
 }
 
 /// 同质资产锁， 包括正在缓存的同质资产池，及当前同质资产的数量，及缓存超时时间
