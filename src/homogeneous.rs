@@ -46,7 +46,7 @@ impl<V: Size> Drop for Droper<V> {
         let v = unsafe { self.data.take().unwrap_unchecked() };
         let lock: &Lock<V> = unsafe { &*(self.lock as *const Lock<V>) };
         let timeout = lock.timeout as u64 + now_millisecond();
-        let mut p = lock.pool.lock();
+        let mut p = lock.pool.lock().unwrap();
         p.1 += v.size();
         p.0.push_back(Item(v, timeout));
     }
@@ -102,7 +102,7 @@ impl<V: Size, G: Garbageer<V>> HomogeneousMgr<V, G> {
             timeout: self.lock.timeout,
             size: self.size(),
             capacity: self.get_capacity(),
-            cache_size: self.lock.pool.lock().1,
+            cache_size: self.lock.pool.lock().unwrap().1,
         }
     }
     /// 创建可回收的同质资产
@@ -115,7 +115,7 @@ impl<V: Size, G: Garbageer<V>> HomogeneousMgr<V, G> {
     }
     /// 获取被缓存的可回收的同质资产
     pub fn get(&self) -> Option<Droper<V>> {
-        let mut p = self.lock.pool.lock();
+        let mut p = self.lock.pool.lock().unwrap();
         if let Some(item) = p.0.pop_back() {
             p.1 -= item.0.size();
             Some(Droper {
@@ -131,7 +131,7 @@ impl<V: Size, G: Garbageer<V>> HomogeneousMgr<V, G> {
     where
         P: FnMut(&V) -> bool,
     {
-        let mut pool = self.lock.pool.lock();
+        let mut pool = self.lock.pool.lock().unwrap();
         let mut i = 0;
         for item in pool.0.iter() {
             if pred(&item.0) {
@@ -156,13 +156,13 @@ impl<V: Size, G: Garbageer<V>> HomogeneousMgr<V, G> {
     pub fn push(&self, v: V) {
         let timeout = self.lock.timeout as u64 + now_millisecond();
         self.lock.size.fetch_add(v.size(), Ordering::Release);
-        let mut p = self.lock.pool.lock();
+        let mut p = self.lock.pool.lock().unwrap();
         p.1 += v.size();
         p.0.push_back(Item(v, timeout));
     }
     /// 弹出被缓存的同质资产
     pub fn pop(&self) -> Option<V> {
-        let mut p = self.lock.pool.lock();
+        let mut p = self.lock.pool.lock().unwrap();
         if let Some(item) = p.0.pop_back() {
             p.1 -= item.0.size();
             self.lock.size.fetch_sub(item.0.size(), Ordering::Release);
@@ -176,7 +176,7 @@ impl<V: Size, G: Garbageer<V>> HomogeneousMgr<V, G> {
     where
         P: FnMut(&V) -> bool,
     {
-        let mut pool = self.lock.pool.lock();
+        let mut pool = self.lock.pool.lock().unwrap();
         let mut i = 0;
         for item in pool.0.iter() {
             if pred(&item.0) {
@@ -201,7 +201,7 @@ impl<V: Size, G: Garbageer<V>> HomogeneousMgr<V, G> {
         if size <= min_capacity {
             return;
         }
-        let mut pool = self.lock.pool.lock();
+        let mut pool = self.lock.pool.lock().unwrap();
         let mut sub = 0;
         while !pool.0.is_empty() {
             let r = pool.0.front().unwrap();
@@ -224,7 +224,7 @@ impl<V: Size, G: Garbageer<V>> HomogeneousMgr<V, G> {
         if size <= capacity {
             return;
         }
-        let mut pool = self.lock.pool.lock();
+        let mut pool = self.lock.pool.lock().unwrap();
         let mut sub = 0;
         while size > capacity + sub && !pool.0.is_empty() {
             let r = pool.0.pop_front().unwrap();
@@ -239,7 +239,7 @@ impl<V: Size, G: Garbageer<V>> HomogeneousMgr<V, G> {
 
 	/// 资源大小
 	pub fn account(&self) -> AssetMgrAccount {
-		let pool = self.lock.pool.lock();
+		let pool = self.lock.pool.lock().unwrap();
 		let mut account = AssetMgrAccount::default();
 
 		for item in pool.0.iter() {

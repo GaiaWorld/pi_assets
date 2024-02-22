@@ -136,7 +136,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
         let len = self.len();
         let size = self.size();
         let capacity = self.get_capacity();
-        let table = self.lock.0.lock();
+        let table = self.lock.0.lock().unwrap();
         AssetMgrInfo {
             timeout: table.timeout,
             len,
@@ -149,14 +149,14 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
     }
     /// 判断是否有指定键的数据
     pub fn contains_key(&self, k: &A::Key) -> bool {
-        let table = self.lock.0.lock();
+        let table = self.lock.0.lock().unwrap();
         table.contains_key(k)
     }
     /// 缓存指定的资产
     pub fn cache(&self, k: A::Key, v: A) -> Option<A> {
         let add = v.size();
         let (r, len) = {
-            let mut table = self.lock.0.lock();
+            let mut table = self.lock.0.lock().unwrap();
             let r = table.cache(k, v);
             let (mut len, mut sub) = if let Some(r) = &r {
                 (1, r.size())
@@ -190,7 +190,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
         let add = v.size();
         let lock = &self.lock as *const Lock<A> as usize;
         let (r, len) = loop {
-            let mut table = self.lock.0.lock();
+            let mut table = self.lock.0.lock().unwrap();
             let (r, b) = table.insert(k.clone(), v, lock);
             let r = match r {
                 Ok(h) => {
@@ -234,7 +234,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
     pub fn get(&self, k: &A::Key) -> Option<Handle<A>> {
         let lock = &self.lock as *const Lock<A> as usize;
         loop {
-            let mut table = self.lock.0.lock();
+            let mut table = self.lock.0.lock().unwrap();
             if let Some(r) = table.get(k.clone(), lock) {
                 if *&r.is_some() {
                     return r;
@@ -249,7 +249,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
     pub fn load<'a>(mgr: &Share<Self>, k: &A::Key) -> LoadResult<'a, A, G> {
         let lock = &mgr.lock as *const Lock<A> as usize;
         let receiver = loop {
-            let mut table = mgr.lock.0.lock();
+            let mut table = mgr.lock.0.lock().unwrap();
             match table.check(k.clone(), lock, true) {
                 Result::Ok(r) => {
                     if let Some(rr) = r {
@@ -290,7 +290,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
                 let add = v.size();
                 let lock = &self.lock as *const Lock<A> as usize;
                 let (r, len) = {
-                    let mut table = self.lock.0.lock();
+                    let mut table = self.lock.0.lock().unwrap();
                     let amount = self.lock.1.load(Ordering::Acquire);
                     let capacity = self.capacity.load(Ordering::Acquire);
                     let size = amount + add;
@@ -312,7 +312,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
                 r
             }
             Err(e) => {
-                let mut table = self.lock.0.lock();
+                let mut table = self.lock.0.lock().unwrap();
                 (Err(e), table.remove(&k))
             }
         }
@@ -325,7 +325,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
             return;
         }
         let b = {
-            let mut table = self.lock.0.lock();
+            let mut table = self.lock.0.lock().unwrap();
             let mut c = table.cache_size();
             if c == 0 {
                 return;
@@ -349,7 +349,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
             return;
         }
         let b = {
-            let mut table = self.lock.0.lock();
+            let mut table = self.lock.0.lock().unwrap();
             let mut c = table.cache_size();
             if c == 0 {
                 return;
@@ -368,14 +368,14 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
     }
     /// 迭代使用表的键
     pub fn map_keys<Arg>(&self, arg: &mut Arg, func: fn(&mut Arg, k: &A::Key)) {
-        let table = self.lock.0.lock();
+        let table = self.lock.0.lock().unwrap();
         for k in table.map_keys() {
             func(arg, k)
         }
     }
     /// 迭代缓存
     pub fn cache_iter<Arg>(&self, arg: &mut Arg, func: fn(&mut Arg, k: &A::Key, v: &A, u64)) {
-        let table = self.lock.0.lock();
+        let table = self.lock.0.lock().unwrap();
         for (k, item) in table.cache_iter() {
             func(arg, k, &item.0, item.1)
         }
@@ -383,7 +383,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
 
 	/// 资源大小
 	pub fn account(&self) -> AssetMgrAccount {
-		let table = self.lock.0.lock();
+		let table = self.lock.0.lock().unwrap();
 		let mut account = AssetMgrAccount::default();
 		table.account(&mut account);
 		account.name = std::any::type_name::<Self>().to_string();

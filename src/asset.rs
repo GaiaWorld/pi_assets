@@ -88,7 +88,7 @@ impl<A: Asset> Drop for Droper<A> {
     fn drop(&mut self) {
         let v = unsafe { self.data.take().unwrap_unchecked() };
         let lock: &Lock<A> = unsafe { &*(self.lock as *const Lock<A>) };
-        let mut table = lock.0.lock();
+        let mut table = lock.0.lock().unwrap();
         table.map.remove(&self.key);
         let timeout = table.timeout as u64 + now_millisecond();
         table.cache.put(self.key.clone(), Item(v, timeout));
@@ -105,7 +105,7 @@ impl<T: Asset> Drop for GarbageGuard<T> {
     fn drop(&mut self) {
         let lock: &ShareMutex<AssetTable<T>> =
             unsafe { &*(self.lock as *const ShareMutex<AssetTable<T>>) };
-        let mut table = lock.lock();
+        let mut table = lock.lock().unwrap();
         table.cache.collect(self.key.clone());
     }
 }
