@@ -230,6 +230,11 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
         }
         r
     }
+
+    pub fn remove(&self, _k: &A::Key) -> bool {
+        // TODO
+        false
+    }
     /// 同步获取已经存在或被缓存的资产
     pub fn get(&self, k: &A::Key) -> Option<Handle<A>> {
         let lock = &self.lock as *const Lock<A> as usize;
