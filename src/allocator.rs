@@ -34,8 +34,8 @@ pub struct Allocator {
     total_capacity: usize,
     /// 统计总计的最小容量
     min_capacity: usize,
-    /// 统计总计的最大容量
-    max_capacity: usize,
+    /// 统计总计的权重
+    total_weight: usize,
     /// 整理时用的临时满容量数组
     temp_full: Vec<usize>,
     /// 整理时用的临时超出数组
@@ -50,19 +50,19 @@ impl Allocator {
             vec: Vec::new(),
             total_capacity,
             min_capacity: 0,
-            max_capacity: 0,
+            total_weight: 0,
             temp_full: Vec::new(),
             temp_overflow: Vec::new(),
         }
     }
     /// 注册可被整理的管理器，要求必须单线程注册
-    pub fn register(&mut self, mgr: Share<dyn Collect>, min_capacity: usize, max_capacity: usize) {
+    pub fn register(&mut self, mgr: Share<dyn Collect>, min_capacity: usize, weight: usize) {
         self.min_capacity += min_capacity;
-        self.max_capacity += max_capacity;
+        self.total_weight += weight;
         let item = Item {
             mgr,
             min_capacity,
-            max_capacity,
+            weight,
             weight_capacity: 0,
             capacity: 0,
         };
@@ -91,7 +91,7 @@ impl Allocator {
         // 如果有未计算的权重容量， 表示需要重新计算权重
         if self.vec.len() > 0 && self.vec[self.vec.len() - 1].weight_capacity == 0 {
             // 计算理论容量
-            let c1 = self.max_capacity - self.min_capacity;
+            let c1 = self.total_weight - self.min_capacity;
             // 计算实际容量
             let c2 = if self.total_capacity > self.min_capacity {
                 self.total_capacity - self.min_capacity
@@ -102,13 +102,13 @@ impl Allocator {
                 let f = c2 as f64 / c1 as f64;
                 // 计算每个资产分组缓存队列的权重容量
                 for i in self.vec.iter_mut() {
-                    i.weight_capacity = i.min_capacity + ((i.max_capacity - i.min_capacity) as f64 * f) as usize;
+                    i.weight_capacity = i.min_capacity + ((i.weight - i.min_capacity) as f64 * f) as usize;
                     i.capacity = i.weight_capacity;
                 }
             }else{
                 // 计算每个资产分组缓存队列的权重容量
                 for i in self.vec.iter_mut() {
-                    i.weight_capacity = i.min_capacity + (i.max_capacity - i.min_capacity) * c2 / c1;
+                    i.weight_capacity = i.min_capacity + (i.weight - i.min_capacity) * c2 / c1;
                     i.capacity = i.weight_capacity;
                 }
             }
@@ -199,7 +199,7 @@ impl Allocator {
 		for item in self.vec.iter() {
 			let mut account = item.mgr.account();
 			account.min_capacity = item.min_capacity;
-			account.max_capacity = item.max_capacity;
+			account.weight = item.weight;
 			account.weight_capacity = item.weight_capacity;
 			account.capacity = item.capacity;
 			r.total_size += account.used_size;
@@ -213,7 +213,7 @@ impl Allocator {
 struct Item {
     mgr: Share<dyn Collect>,
     min_capacity: usize,
-    max_capacity: usize,
+    weight: usize,
     weight_capacity: usize,
     capacity: usize,
 }
@@ -223,7 +223,7 @@ struct Item {
 pub struct AssetMgrAccount {
 	pub name: String,
 	min_capacity: usize,
-    max_capacity: usize,
+    weight: usize,
     weight_capacity: usize,
     capacity: usize,
 

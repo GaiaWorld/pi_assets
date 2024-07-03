@@ -128,18 +128,18 @@ pub(crate) enum AssetResult<A: Asset> {
 }
 
 impl<A: Asset> AssetTable<A> {
-    /// 用超时时间，初始表大小，CuckooFilter窗口大小，整理率，创建
+    /// 用超时时间，初始表大小，整理率，创建
     pub fn with_config(
         timeout: usize,
         cache_capacity: usize,
-        cuckoo_filter_window_size: usize,
+        // cuckoo_filter_window_size: usize,
         frequency_down_rate: usize,
     ) -> Self {
         AssetTable {
             map: Default::default(),
             cache: Cache::with_config(
                 cache_capacity,
-                cuckoo_filter_window_size,
+                // cuckoo_filter_window_size,
                 frequency_down_rate,
             ),
             // size: 0,

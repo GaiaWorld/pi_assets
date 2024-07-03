@@ -198,9 +198,9 @@ impl<V: Size, G: Garbageer<V>> HomogeneousMgr<V, G> {
     /// 超时整理
     pub fn timeout_collect(&self, min_capacity: usize, now: u64) {
         let size = self.size();
-        if size <= min_capacity {
-            return;
-        }
+        // if size <= min_capacity {
+        //     return;
+        // }
         let mut pool = self.lock.pool.lock().unwrap();
         let mut sub = 0;
         while !pool.0.is_empty() {
