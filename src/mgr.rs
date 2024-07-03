@@ -7,7 +7,7 @@ use crate::asset::*;
 use pi_futures::BoxFuture;
 use futures::io;
 use pi_cache::Metrics;
-use pi_cache::{FREQUENCY_DOWN_RATE, WINDOW_SIZE};
+use pi_cache::FREQUENCY_DOWN_RATE;
 use pi_share::{Share, ShareMutex, ShareUsize};
 use std::fmt::Debug;
 use std::io::{Error, ErrorKind};
@@ -80,7 +80,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
             capacity,
             timeout,
             0,
-            WINDOW_SIZE,
+            // WINDOW_SIZE,
             FREQUENCY_DOWN_RATE,
         )
     }
@@ -91,7 +91,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
         capacity: usize,
         timeout: usize,
         cache_init_capacity: usize,
-        cuckoo_filter_window_size: usize,
+        // cuckoo_filter_window_size: usize,
         frequency_down_rate: usize,
     ) -> Share<Self> {
         let mut mgr = Share::new(Self {
@@ -99,7 +99,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
                 ShareMutex::new(AssetTable::<A>::with_config(
                     timeout,
                     cache_init_capacity,
-                    cuckoo_filter_window_size,
+                    // cuckoo_filter_window_size,
                     frequency_down_rate,
                 )),
                 ShareUsize::new(0),
