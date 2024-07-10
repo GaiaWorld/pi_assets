@@ -68,6 +68,9 @@ pub struct AssetMgr<A: Asset, G: Garbageer<A> = GarbageEmpty> {
     garbage: G,
     /// 是否采用引用回收及锁指针
     ref_garbage_lock: usize,
+
+    /// 一些资产可能需要标记类型
+    pub ty: u32,
 }
 unsafe impl<A: Asset, G: Garbageer<A>> Send for AssetMgr<A, G> {}
 unsafe impl<A: Asset, G: Garbageer<A>> Sync for AssetMgr<A, G> {}
@@ -108,6 +111,7 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
             capacity: ShareUsize::new(capacity),
             garbage,
             ref_garbage_lock: 0,
+            ty: std::u32::MAX,
         });
         if ref_garbage {
             let mgr = Share::get_mut(&mut mgr).unwrap();
@@ -123,6 +127,11 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
     pub fn size(&self) -> usize {
         self.lock.1.load(Ordering::Acquire)
     }
+
+    /// 正在使用的大小
+    pub fn using_size(&self) -> usize {
+        self.size() - self.lock.0.lock().unwrap().cache_size()
+    }
     /// 获得当前容量
     pub fn get_capacity(&self) -> usize {
         self.capacity.load(Ordering::Acquire)
@@ -136,7 +145,9 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
         let len = self.len();
         let size = self.size();
         let capacity = self.get_capacity();
+        // log::error!("info start============={:p}", &self.lock.0);
         let table = self.lock.0.lock().unwrap();
+        // log::error!("info end============={:p}", &self.lock.0);
         AssetMgrInfo {
             timeout: table.timeout,
             len,
@@ -149,14 +160,18 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
     }
     /// 判断是否有指定键的数据
     pub fn contains_key(&self, k: &A::Key) -> bool {
+        // log::error!("contains_key start============={:p}", &self.lock.0);
         let table = self.lock.0.lock().unwrap();
+        // log::error!("contains_key end============={:p}", &self.lock.0);
         table.contains_key(k)
     }
     /// 缓存指定的资产
     pub fn cache(&self, k: A::Key, v: A) -> Option<A> {
         let add = v.size();
         let (r, len) = {
+            // log::error!("cache start============={:p}", &self.lock.0);
             let mut table = self.lock.0.lock().unwrap();
+            // log::error!("cache end============={:p}", &self.lock.0);
             let r = table.cache(k, v);
             let (mut len, mut sub) = if let Some(r) = &r {
                 (1, r.size())
@@ -190,8 +205,10 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
         let add = v.size();
         let lock = &self.lock as *const Lock<A> as usize;
         let (r, len) = loop {
+            // log::error!("insert start============={:p}", &self.lock.0);
             let mut table = self.lock.0.lock().unwrap();
             let (r, b) = table.insert(k.clone(), v, lock);
+            // log::error!("insert end============={:p}", &self.lock.0);
             let r = match r {
                 Ok(h) => {
                     if b {
@@ -239,7 +256,9 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
     pub fn get(&self, k: &A::Key) -> Option<Handle<A>> {
         let lock = &self.lock as *const Lock<A> as usize;
         loop {
+            // log::error!("get start============={:p}", &self.lock.0);
             let mut table = self.lock.0.lock().unwrap();
+            // log::error!("get end============={:p}", &self.lock.0);
             if let Some(r) = table.get(k.clone(), lock) {
                 if *&r.is_some() {
                     return r;
@@ -254,7 +273,9 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
     pub fn load<'a>(mgr: &Share<Self>, k: &A::Key) -> LoadResult<'a, A, G> {
         let lock = &mgr.lock as *const Lock<A> as usize;
         let receiver = loop {
+            // log::error!("load start============={:p}", &mgr.lock.0);
             let mut table = mgr.lock.0.lock().unwrap();
+            // log::error!("load end============={:p}", &mgr.lock.0);
             match table.check(k.clone(), lock, true) {
                 Result::Ok(r) => {
                     if let Some(rr) = r {
@@ -293,9 +314,11 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
         match r {
             Ok(v) => {
                 let add = v.size();
-                let lock = &self.lock as *const Lock<A> as usize;
+                let lock: usize = &self.lock as *const Lock<A> as usize;
                 let (r, len) = {
+                    // log::error!("receive start============={:p}", &self.lock.0);
                     let mut table = self.lock.0.lock().unwrap();
+                    // log::error!("receive end============={:p}", &self.lock.0);
                     let amount = self.lock.1.load(Ordering::Acquire);
                     let capacity = self.capacity.load(Ordering::Acquire);
                     let size = amount + add;
@@ -317,7 +340,9 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
                 r
             }
             Err(e) => {
+                // log::error!("receive1 start============={:p}", &self.lock.0);
                 let mut table = self.lock.0.lock().unwrap();
+                // log::error!("receive1 end============={:p}", &self.lock.0);
                 (Err(e), table.remove(&k))
             }
         }
@@ -330,7 +355,9 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
             return;
         }
         let b = {
+            // log::error!("timeout_collect start============={:p}", &self.lock.0);
             let mut table = self.lock.0.lock().unwrap();
+            // log::error!("timeout_collect end============={:p}", &self.lock.0);
             let mut c = table.cache_size();
             if c == 0 {
                 return;
@@ -348,12 +375,13 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
         }
     }
     /// 超容量整理
-    pub fn capacity_collect(&self, capacity: usize) {
+    pub fn capacity_collect(&self, capacity: usize) {  
         let size = self.lock.1.load(Ordering::Acquire);
         if size <= capacity {
             return;
         }
         let b = {
+            // log::error!("capacity_collect start============={:p}", &self.lock.0);
             let mut table = self.lock.0.lock().unwrap();
             let mut c = table.cache_size();
             if c == 0 {
@@ -373,14 +401,18 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
     }
     /// 迭代使用表的键
     pub fn map_keys<Arg>(&self, arg: &mut Arg, func: fn(&mut Arg, k: &A::Key)) {
+        // log::error!("map_keys start============={:p}", &self.lock.0);
         let table = self.lock.0.lock().unwrap();
+        // log::error!("map_keys end============={:p}", &self.lock.0);
         for k in table.map_keys() {
             func(arg, k)
         }
     }
     /// 迭代缓存
     pub fn cache_iter<Arg>(&self, arg: &mut Arg, func: fn(&mut Arg, k: &A::Key, v: &A, u64)) {
+        // log::error!("cache_iter start============={:p}", &self.lock.0);
         let table = self.lock.0.lock().unwrap();
+        // log::error!("cache_iter end============={:p}", &self.lock.0);
         for (k, item) in table.cache_iter() {
             func(arg, k, &item.0, item.1)
         }
@@ -388,10 +420,13 @@ impl<A: Asset, G: Garbageer<A>> AssetMgr<A, G> {
 
 	/// 资源大小
 	pub fn account(&self) -> AssetMgrAccount {
+        // log::error!("account start============={:p}", &self.lock.0);
 		let table = self.lock.0.lock().unwrap();
+        // log::error!("account end============={:p}", &self.lock.0);
 		let mut account = AssetMgrAccount::default();
 		table.account(&mut account);
 		account.name = std::any::type_name::<Self>().to_string();
+        account.ty = self.ty;
 		account
 
 	}

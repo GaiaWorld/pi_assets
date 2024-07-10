@@ -21,8 +21,12 @@ pi_share = "0.4"
 futures = "0.3"
 pi_futures = "0.1"
 flume = "0.10"
+serde = { version = "1.0", features = ["derive"] }
 
 
 [dev-dependencies]
 pcg_rand = "0.13"
 rand_core = "0.6"
+
+[patch.crates-io]
+pi_share = {path = "../pi_share"}

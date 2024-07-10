@@ -88,6 +88,7 @@ impl<V: Size, G: Garbageer<V>> HomogeneousMgr<V, G> {
     pub fn size(&self) -> usize {
         self.lock.size.load(Ordering::Acquire)
     }
+    
     /// 获得当前容量
     pub fn get_capacity(&self) -> usize {
         self.capacity.load(Ordering::Acquire)
@@ -251,7 +252,9 @@ impl<V: Size, G: Garbageer<V>> HomogeneousMgr<V, G> {
             });
 			account.unused_size += size;
 		}
+        account.size = account.unused_size;
 		account.name = std::any::type_name::<Self>().to_string();
+        account.ty = std::u32::MAX;
 		account
 
 	}

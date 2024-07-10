@@ -337,8 +337,11 @@ impl<A: Asset> AssetTable<A> {
             }
         } else {
             for r in self.cache.capacity_collect(capacity) {
+                // if std::any::type_name::<A>().contains("BufferRes") || std::any::type_name::<A>().contains("GeometryRes") {
+                //     log::error!("capacity_collect====={:?}", &r.0);
+                // }
                 l += 1;
-                s += r.1 .0.size();
+                s += r.1.0.size();
                 g.garbage(r.0, r.1 .0, r.1 .1)
             }
         }
@@ -371,6 +374,8 @@ impl<A: Asset> AssetTable<A> {
 				}
 			}
 		}
+
+        account.size = account.used_size + account.unused_size;
 	}
 }
 
