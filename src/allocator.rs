@@ -280,6 +280,8 @@ pub struct AssetMgrAccount {
     pub weight_capacity: f32, // 单位 k
     pub capacity: f32, // 单位 k
     pub ty: u32,
+    pub visit_count: usize,
+    pub hit_rate: f32,
 }
 
 /// 每资产信息

@@ -376,6 +376,11 @@ impl<A: Asset> AssetTable<A> {
 		}
 
         account.size = account.used_size + account.unused_size;
+        let m = self.cache.metrics();
+        account.visit_count = m.hit + m.miss;
+        if account.visit_count > 0 {
+            account.hit_rate = m.hit as f32 / account.visit_count as f32;
+        } 
 	}
 }
 
