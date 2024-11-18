@@ -1,6 +1,6 @@
 [package]
 name = "pi_assets"
-version = "0.14.2"
+version = "0.14.3"
 authors = ["zmax <zmax@gaia.world>"]
 edition = "2021"
 description = "assets manager, async load assets, The capacity of multiple managers is managed uniformly"
@@ -13,7 +13,7 @@ repository = "https://github.com/GaiaWorld/pi_assets"
 
 [dependencies]
 log = "0.4"
-pi_time = "0.3"
+pi_time = {version = "0.5", features = ["high_performance"]}
 pi_cache = "0.4"
 pi_hash = "0.1"
 pi-async-rt = "0.1"
