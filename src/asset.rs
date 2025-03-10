@@ -375,6 +375,7 @@ impl<A: Asset> AssetTable<A> {
 			}
 		}
 
+        account.timeout = self.timeout;
         account.size = account.used_size + account.unused_size;
         let m = self.cache.metrics();
         account.visit_count = m.hit + m.miss;

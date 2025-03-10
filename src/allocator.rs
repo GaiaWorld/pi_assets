@@ -13,7 +13,7 @@ use crate::mgr::AssetMgr;
 pub trait Collect: Send + Sync {
     /// 设置整理器的容量
     fn set_capacity(&self, capacity: usize);
-    /// 获得整理器的大小
+    /// 获得整理器的大小(正在使用和未使用的资源大小)
     fn size(&self) -> usize;
     /// 获得整理器正在使用的大小
     fn using_size(&self) -> usize;
@@ -90,7 +90,8 @@ impl Allocator {
     /// 整理方法， 清理超时和超容量的资源。
     /// 分配器有总内存容量， 按权重分给其下的Mgr。
     /// 如果总容量有空闲， 则按权重提高那些满的Mgr的容量
-    pub fn collect(&mut self, now: u64) {
+    pub fn collect(&mut self, _now: u64) {
+        let now = pi_time::now_millisecond();
         // 如果有未计算的权重容量， 表示需要重新计算权重
         // if self.vec.len() > 0 && self.vec[self.vec.len() - 1].weight_capacity == 0 {
             // // 计算理论容量
@@ -282,6 +283,7 @@ pub struct AssetMgrAccount {
     pub ty: u32,
     pub visit_count: usize,
     pub hit_rate: f32,
+    pub timeout: usize, // 单位ms
 }
 
 /// 每资产信息
