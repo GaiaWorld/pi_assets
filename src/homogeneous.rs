@@ -57,7 +57,7 @@ pub struct HomogeneousMgrInfo {
     pub timeout: usize,
     pub size: usize,
     pub capacity: usize,
-    pub cache_size: usize,
+    pub cache_size: usize, 
 }
 
 /// 同质资产管理器
@@ -68,6 +68,8 @@ pub struct HomogeneousMgr<V: Size, G: Garbageer<V> = GarbageEmpty> {
     capacity: ShareUsize,
     /// 回收器
     garbage: G,
+    // 一些资产可能需要标记类型
+    pub ty: u32,
 }
 unsafe impl<V: Size, G: Garbageer<V>> Send for HomogeneousMgr<V, G> {}
 unsafe impl<V: Size, G: Garbageer<V>> Sync for HomogeneousMgr<V, G> {}
@@ -82,6 +84,7 @@ impl<V: Size, G: Garbageer<V>> HomogeneousMgr<V, G> {
             },
             capacity: ShareUsize::new(capacity),
             garbage,
+            ty: 0,
         })
     }
     /// 获得同质资产的大小
@@ -281,6 +284,7 @@ mod test_mod {
     use self::rand_core::{RngCore, SeedableRng};
 
     #[derive(Debug)]
+    #[allow(dead_code)]
     struct Uu(u128);
     impl Size for Uu {}
     #[test]
