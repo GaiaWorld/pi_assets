@@ -68,6 +68,7 @@ pub struct HomogeneousMgr<V: Size, G: Garbageer<V> = GarbageEmpty> {
     capacity: ShareUsize,
     /// 回收器
     garbage: G,
+    pub ty: usize,
 }
 unsafe impl<V: Size, G: Garbageer<V>> Send for HomogeneousMgr<V, G> {}
 unsafe impl<V: Size, G: Garbageer<V>> Sync for HomogeneousMgr<V, G> {}
@@ -82,6 +83,7 @@ impl<V: Size, G: Garbageer<V>> HomogeneousMgr<V, G> {
             },
             capacity: ShareUsize::new(capacity),
             garbage,
+            ty: 0,
         })
     }
     /// 获得同质资产的大小

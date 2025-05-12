@@ -1,6 +1,6 @@
 [package]
 name = "pi_assets"
-version = "0.14.5"
+version = "0.14.6"
 authors = ["zmax <zmax@gaia.world>"]
 edition = "2021"
 description = "assets manager, async load assets, The capacity of multiple managers is managed uniformly"
