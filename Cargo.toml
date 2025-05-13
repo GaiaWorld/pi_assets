@@ -23,7 +23,7 @@ pi_futures = "0.1"
 flume = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 quanta = "0.12.3"
-backtrace = "0.3.74"
+backtrace = "=0.3.74"
 
 
 [dev-dependencies]
