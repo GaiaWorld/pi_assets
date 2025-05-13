@@ -17,13 +17,13 @@ pi_time = {version = "0.5"}
 pi_cache = "0.4"
 pi_hash = "0.1"
 pi-async-rt = "0.1"
-pi_share = "=0.4.15"
+pi_share = "0.4.15"
 futures = "0.3"
 pi_futures = "0.1"
 flume = "0.10"
 serde = { version = "1.0", features = ["derive"] }
-quanta = "=0.12.3"
-backtrace = "=0.3.74"
+quanta = "0.12.3"
+backtrace = "0.3.74"
 
 
 [dev-dependencies]
