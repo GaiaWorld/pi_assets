@@ -256,7 +256,7 @@ impl<V: Size, G: Garbageer<V>> HomogeneousMgr<V, G> {
 		}
         account.size = account.unused_size;
 		account.name = std::any::type_name::<Self>().to_string();
-        account.ty = std::u32::MAX;
+        account.ty = self.ty;
 		account
 
 	}
