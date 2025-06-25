@@ -157,8 +157,8 @@ impl Allocator {
         let mut overflow_size = 0;
         // 空闲容量
         let mut free_size = 0;
-        // 满的容量和
-        let mut full_size = 0;
+        // 满的权重和
+        let mut full_weight = 0;
         // 先用超时整理腾出空间，统计每种资源的占用
         for i in 0..self.vec.len() {
             let item = &mut self.vec[i];
@@ -183,7 +183,7 @@ impl Allocator {
             // 如果条目已经满了，则记录该条目，并累计capacity权重
             if size as f32 > item.capacity as f32 * FULL {
                 self.temp_full.push(i);
-                full_size += item.capacity;
+                full_weight += item.weight;
             }
         }
         // println!("free_size : {}, {:?}, {:?}, {:?}", free_size, overflow_size, self.temp_full.len(), self.temp_overflow.len());
@@ -193,7 +193,7 @@ impl Allocator {
 			
             for index in &self.temp_full {
                 let item = &mut self.vec[*index];
-                let fix = (size as f64 * (item.capacity as f64 / full_size as f64)) as usize;
+                let fix = (size as f64 * (item.weight as f64 / full_weight as f64)) as usize;
                 item.capacity += fix;
                 // if *index == 13 {
                 //     item.capacity = 0;
