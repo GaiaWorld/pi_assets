@@ -133,7 +133,12 @@ impl Allocator {
             for i in 0..self.vec.len() {
                 let item: &mut Item = &mut self.vec[i];
                 item.weight_capacity = item.mgr.using_size().max(item.min_capacity) + (item.weight as f32/self.total_weight as f32 * c2 as f32) as usize;
-                item.capacity = item.capacity.max(item.weight_capacity);
+                if item.weight == 0 {
+                    // 特殊处理权重为0的情况， 表示完全不争夺资源
+                    item.capacity = item.weight_capacity;
+                } else {
+                    item.capacity = item.capacity.max(item.weight_capacity);
+                }
 
                 // if i == 13 {
                 //     log::error!("item x: {}, {:?}, {:?}", i, item.capacity, item.weight_capacity);

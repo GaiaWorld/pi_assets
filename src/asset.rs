@@ -9,7 +9,7 @@ use pi_time::now_millisecond;
 use std::collections::hash_map::{Entry, Keys};
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::io::Result;
+use std::io::{Error, ErrorKind, Result};
 use std::ops::Deref;
 use std::result::Result as Result1;
 use std::sync::atomic::Ordering;
@@ -127,6 +127,16 @@ pub(crate) enum AssetResult<A: Asset> {
     Wait(Vec<Sender<Result<Handle<A>>>>),
 }
 
+/// 删除资产的结果
+pub enum DeleteResult {
+    /// 删除成功，返回资产大小（0 表示无需调整计数器，>0 需要调减计数器）
+    Ok(usize),
+    /// 资产在 map 中（外部持有 Handle 或正在释放），无法删除
+    InUse,
+    /// 资产不存在
+    NotFound,
+}
+
 impl<A: Asset> AssetTable<A> {
     /// 用超时时间，初始表大小，整理率，创建
     pub fn with_config(
@@ -195,6 +205,7 @@ impl<A: Asset> AssetTable<A> {
                     key: e.key().clone(),
                     data: Some(v),
                     lock,
+
                 });
                 e.insert(AssetResult::Ok(Share::downgrade(&r)));
                 (Ok(r), b)
@@ -217,6 +228,7 @@ impl<A: Asset> AssetTable<A> {
                     key: e.key().clone(),
                     data: Some(v),
                     lock,
+
                 });
                 e.insert(AssetResult::Ok(Share::downgrade(&r)));
                 Some(Some(r))
@@ -246,6 +258,7 @@ impl<A: Asset> AssetTable<A> {
                         key: e.key().clone(),
                         data: Some(v.0),
                         lock,
+    
                     });
                     e.insert(AssetResult::Ok(Share::downgrade(&r)));
                     Ok(Some(r))
@@ -267,17 +280,60 @@ impl<A: Asset> AssetTable<A> {
         lock: usize,
     ) -> (Result<Handle<A>>, Option<AssetResult<A>>) {
         // self.size += v.size();
-        let r = Share::new(Droper {
-            key: k.clone(),
-            data: Some(v),
-            lock,
-        });
-        let weak = AssetResult::Ok(Share::downgrade(&r));
-        (Ok(r), self.map.insert(k, weak))
+        // 先取出旧条目，确认是Wait才创建Droper
+        let old = self.map.remove(&k);
+        match old {
+            Some(AssetResult::Wait(_)) => {
+                // 加载未被取消，创建资产并插入Ok
+                let r = Share::new(Droper {
+                    key: k.clone(),
+                    data: Some(v),
+                    lock,
+
+                });
+                let weak = AssetResult::Ok(Share::downgrade(&r));
+                self.map.insert(k, weak);
+                (Ok(r), old)
+            }
+            Some(other) => {
+                // 状态异常，放回
+                self.map.insert(k, other);
+                (Err(Error::new(ErrorKind::Other, "asset not in loading state")), None)
+            }
+            None => {
+                // 已被delete取消加载
+                (Err(Error::new(ErrorKind::Other, "asset loading cancelled")), None)
+            }
+        }
     }
     /// 移除等待的接收器
     pub fn remove(&mut self, k: &A::Key) -> Option<AssetResult<A>> {
         self.map.remove(k)
+    }
+    /// 从表中删除资产（包括map和cache）
+    ///
+    /// 返回值：
+    /// - `DeleteResult::Ok(size)`：删除成功。size=0 表示删除的是 map 中待加载(Waiter)
+    ///   的条目，无需调整计数；size>0 表示删除的是缓存中的条目，需要调减计数。
+    /// - `DeleteResult::InUse`：资产在 map 中（外部持有 Handle 或正在释放），无法删除。
+    /// - `DeleteResult::NotFound`：资产不存在。
+    pub(crate) fn delete(&mut self, k: &A::Key) -> DeleteResult {
+        // 先查使用表
+        if let Some(entry) = self.map.remove(k) {
+            return match entry {
+                AssetResult::Ok(weak) => {
+                    // 外部持有 Handle或弱引用失效，正在释放，插回 map，返回 InUse
+                    self.map.insert(k.clone(), AssetResult::Ok(weak));
+                    DeleteResult::InUse
+                },
+                AssetResult::Wait(_) => DeleteResult::Ok(0), // 加载中，未记入计数
+            };
+        }
+        // 再查缓存表
+        match self.cache.take(k) {
+            Some(item) => DeleteResult::Ok(item.0.size()),
+            None => DeleteResult::NotFound,
+        }
     }
     /// 超时整理方法， 清理最小容量外的超时资产
     pub fn timeout_collect<G: Garbageer<A>>(
